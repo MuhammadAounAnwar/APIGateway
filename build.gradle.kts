@@ -25,6 +25,7 @@ repositories {
 
 // Ensure this Spring Cloud version is compatible with the Spring Boot version above (3.3.1 -> 2023.0.4 is compatible)
 val springCloudVersion = "2023.0.4"
+val jjwtVersion = "0.12.5"
 
 dependencyManagement {
     imports {
@@ -55,10 +56,11 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-oauth2-client")
 
     // JWT processing - Required for custom JWT validation filters
-    val jjwtVersion = "0.12.5"
     implementation("io.jsonwebtoken:jjwt-api:$jjwtVersion")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:$jjwtVersion")
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:$jjwtVersion")
+    implementation("jakarta.xml.bind:jakarta.xml.bind-api:4.0.0")
+    runtimeOnly("org.glassfish.jaxb:jaxb-runtime:4.0.5")
 
     // -------------------------------------------------------------------------
     // 3. Kotlin & Utilities
@@ -66,9 +68,6 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 
-    // Config/Environment Management - Fine to keep for loading .env files
-    implementation("io.github.cdimascio:dotenv-kotlin:6.4.1")
-    implementation("me.paulschwarz:spring-dotenv:4.0.0")
     developmentOnly("org.springframework.boot:spring-boot-devtools")
 
     // -------------------------------------------------------------------------
@@ -83,6 +82,7 @@ dependencies {
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.security:spring-security-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
+
     // ESSENTIAL for testing reactive (WebFlux/Gateway) components
     testImplementation("io.projectreactor:reactor-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

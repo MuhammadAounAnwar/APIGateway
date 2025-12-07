@@ -6,6 +6,10 @@ spring:
   application:
     name: API-GATEWAY # Optional, but good practice
 
+  security:
+    jwt:
+      secret: ${JWT_SECRET}
+
   cloud:
     gateway:
       routes:
@@ -30,7 +34,7 @@ spring:
             - Path=/user/**
           filters: # <--- Apply the correction here
             - RewritePath=/user/(?<remaining>.*), /${remaining}
-#            - name: AuthPreFilter # This is correct for calling a custom filter
+            - name: AuthPreFilter # This is correct for calling a custom filter
         
         # ------------------------------------------------------------------
         # Route 3: RestaurantClient
@@ -41,6 +45,7 @@ spring:
             - Path=/restaurants/**
           filters:
             - RewritePath=/restaurants/(?<remaining>.*), /${remaining}
+            - name: AuthPreFilter
 
         # ------------------------------------------------------------------
         # Route 4: OrderClient
@@ -51,6 +56,10 @@ spring:
             - Path=/orders/**
           filters:
             - RewritePath=/orders/(?<remaining>.*), /${remaining}
+            - name: AuthPreFilter
 
-        # NOTE: Oauth2 Client often acts as a dedicated backend service for token issuance/validation, 
-        # so its routes would be configured here if it exposes direct endpoints.
+
+logging:
+  level:
+    org.springframework.cloud.gateway: DEBUG
+    reactor.netty.http.client: DEBUG
