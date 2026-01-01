@@ -6,17 +6,21 @@ import io.jsonwebtoken.Jwts
 import io.jsonwebtoken.security.Keys
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
-import java.security.Key
+import javax.crypto.SecretKey
 
 @Component
 class JwtTokenProvider(
-    @param:Value("\${security.jwt.secret}")
+    @param:Value("\${spring.security.jwt.secret}")
     private val jwtSecret: String
 ) {
-    private val key: Key = Keys.hmacShaKeyFor(jwtSecret.toByteArray())
+    private val key: SecretKey = Keys.hmacShaKeyFor(jwtSecret.toByteArray())
+
+    init {
+        println("JWT Secret loaded successfully: $jwtSecret") // Check the loaded value
+    }
 
     fun extractClaims(token: String): Claims {
-        return Jwts.parser().setSigningKey(key).build().parseClaimsJws(token).payload
+        return Jwts.parser().verifyWith(key).build().parseSignedClaims(token).payload
     }
 
     fun extractEmail(token: String): String {

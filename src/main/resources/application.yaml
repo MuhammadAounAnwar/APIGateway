@@ -1,3 +1,10 @@
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka
+    register-with-eureka: true
+    fetch-registry: true
+
 # application.yml for API Gateway (running on 8762)
 server:
   port: 8762
@@ -5,6 +12,9 @@ server:
 spring:
   application:
     name: API-GATEWAY # Optional, but good practice
+
+  config:
+    import: optional:file:.env  # loads environment variables from .env
 
   security:
     jwt:
@@ -20,10 +30,14 @@ spring:
           uri: lb://AUTH-CLIENT
           predicates:
             # 1. The Predicate list item must be indented and standalone
-            - Path=/auth/** # <--- CORRECT: The list item ends here
+            - Path=/api/auth/** # <--- CORRECT: The list item ends here
           filters: # <--- CORRECT: The 'filters' keyword is now a peer to 'predicates'
             # 2. The Filter list items must be indented under 'filters'
-            - RewritePath=/auth/(?<remaining>.*), /${remaining}
+            - RewritePath=/api/auth/(?<remaining>.*), /${remaining}
+            - name: CircuitBreaker
+              args:
+                name: authCB
+                fallbackUri: forward:/fallback/auth
 
         # ------------------------------------------------------------------
         # Route 2: UserClient (Secured Endpoints)
@@ -31,10 +45,14 @@ spring:
         - id: user_route
           uri: lb://USER-CLIENT
           predicates:
-            - Path=/user/**
-          filters: # <--- Apply the correction here
+            - Path=/api/user/**
+          filters:
             - RewritePath=/user/(?<remaining>.*), /${remaining}
-            - name: AuthPreFilter # This is correct for calling a custom filter
+            - name: AuthPreFilter
+            - name: CircuitBreaker
+              args:
+                name: userServiceCB
+                fallbackUri: forward:/fallback/user
         
         # ------------------------------------------------------------------
         # Route 3: RestaurantClient
@@ -42,10 +60,14 @@ spring:
         - id: restaurant_route
           uri: lb://RESTAURANT-CLIENT
           predicates:
-            - Path=/restaurants/**
+            - Path=/api/restaurants/**
           filters:
             - RewritePath=/restaurants/(?<remaining>.*), /${remaining}
             - name: AuthPreFilter
+            - name: CircuitBreaker
+              args:
+                name: restaurantServiceCB
+                fallbackUri: forward:/fallback/restaurant
 
         # ------------------------------------------------------------------
         # Route 4: OrderClient
@@ -53,13 +75,46 @@ spring:
         - id: order_route
           uri: lb://ORDER-CLIENT
           predicates:
-            - Path=/orders/**
+            - Path=/api/orders/**
           filters:
             - RewritePath=/orders/(?<remaining>.*), /${remaining}
             - name: AuthPreFilter
+            - name: CircuitBreaker
+              args:
+                name: orderServiceCB
+                fallbackUri: forward:/fallback/order
 
+resilience4j:
+  circuitbreaker:
+    instances:
+      authCB:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+
+      userServiceCB:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+
+      restaurantServiceCB:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
+
+      orderServiceCB:
+        slidingWindowSize: 10
+        failureRateThreshold: 50
+        waitDurationInOpenState: 10s
 
 logging:
   level:
     org.springframework.cloud.gateway: DEBUG
     reactor.netty.http.client: DEBUG
+
+ono:
+  logging:
+    exceptions:
+      enabled: false
+    performance:
+      enabled: true

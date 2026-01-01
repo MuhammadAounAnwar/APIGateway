@@ -1,6 +1,7 @@
 package com.ono.apigateway
 
 import io.jsonwebtoken.JwtException
+import org.slf4j.LoggerFactory
 import org.springframework.cloud.gateway.filter.GatewayFilter
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory
 import org.springframework.http.HttpHeaders
@@ -15,6 +16,8 @@ class AuthPreFilterGatewayFilterFactory(
     val routeValidator: RouteValidator
 ) : AbstractGatewayFilterFactory<AuthPreFilterGatewayFilterFactory.Config>(Config::class.java) {
 
+    private val log = LoggerFactory.getLogger(AuthPreFilterGatewayFilterFactory::class.java)
+
     class Config
 
     override fun apply(config: Config?): GatewayFilter? {
@@ -25,13 +28,13 @@ class AuthPreFilterGatewayFilterFactory(
 
 
             if (routeValidator.isSecured(path)) {
-                val authHeader = request.headers.getFirst("Authorization")
+                val authHeader = request.headers.getFirst(HttpHeaders.AUTHORIZATION)
                 if (authHeader == null || !authHeader.startsWith("Bearer ")) {
                     return@GatewayFilter chain.filter(exchange)
                 }
 
                 val token = authHeader.substring(7)
-                try {
+                return@GatewayFilter try {
                     jwtTokenProvider.validateToken(token)
                     val email = jwtTokenProvider.extractEmail(token)
 
@@ -40,11 +43,32 @@ class AuthPreFilterGatewayFilterFactory(
                         .header(HttpHeaders.AUTHORIZATION, "Bearer $token")
                         .build()
 
-                    return@GatewayFilter chain.filter(exchange.mutate().request(mutateRequest).build())
+                    chain.filter(exchange.mutate().request(mutateRequest).build())
                 } catch (ex: JwtException) {
-                    return@GatewayFilter onError(exchange, "JWT invalid token", HttpStatus.UNAUTHORIZED)
-                } catch (e: Exception) {
-                    return@GatewayFilter onError(
+                    log.warn(
+                        "JWT validation failed",
+                        mapOf(
+                            "path" to path,
+                            "reason" to ex.message,
+                            "ip" to request.remoteAddress?.address?.hostAddress
+                        )
+                    )
+
+                    onError(exchange, "Invalid token", HttpStatus.UNAUTHORIZED)
+
+
+                } catch (ex: Exception) {
+
+                    log.warn(
+                        "An internal error occurred",
+                        mapOf(
+                            "path" to path,
+                            "reason" to ex.message,
+                            "ip" to request.remoteAddress?.address?.hostAddress
+                        )
+                    )
+
+                    onError(
                         exchange,
                         "An internal error occurred",
                         HttpStatus.INTERNAL_SERVER_ERROR
@@ -56,11 +80,18 @@ class AuthPreFilterGatewayFilterFactory(
         }
     }
 
-    private fun onError(exchange: ServerWebExchange, err: String, status: HttpStatus): Mono<Void> {
+    private fun onError(exchange: ServerWebExchange, message: String, status: HttpStatus): Mono<Void> {
+        log.error(
+            "Gateway authentication error",
+            mapOf(
+                "status" to status.value(),
+                "path" to exchange.request.uri.path,
+                "message" to message
+            )
+        )
+
         val response = exchange.response
         response.statusCode = status
-
-        println("Gateway Filter Error: $err")
         return response.setComplete()
     }
 }

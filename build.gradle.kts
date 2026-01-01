@@ -1,7 +1,9 @@
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+
 plugins {
     // 1. **CRITICAL CHANGE:** Revert to stable Kotlin 1.9.x
-    kotlin("jvm") version "2.2.21"
-    kotlin("plugin.spring") version "2.2.21"
+    kotlin("jvm") version "1.9.24"
+    kotlin("plugin.spring") version "1.9.24"
 
     id("org.springframework.boot") version "3.2.5" // Keep this stable version
     id("io.spring.dependency-management") version "1.1.7"
@@ -17,10 +19,6 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
     }
-}
-
-repositories {
-    mavenCentral()
 }
 
 // Ensure this Spring Cloud version is compatible with the Spring Boot version above (3.3.1 -> 2023.0.4 is compatible)
@@ -59,8 +57,6 @@ dependencies {
     implementation("io.jsonwebtoken:jjwt-api:$jjwtVersion")
     runtimeOnly("io.jsonwebtoken:jjwt-impl:$jjwtVersion")
     runtimeOnly("io.jsonwebtoken:jjwt-jackson:$jjwtVersion")
-    implementation("jakarta.xml.bind:jakarta.xml.bind-api:4.0.0")
-    runtimeOnly("org.glassfish.jaxb:jaxb-runtime:4.0.5")
 
     // -------------------------------------------------------------------------
     // 3. Kotlin & Utilities
@@ -83,14 +79,32 @@ dependencies {
     testImplementation("org.springframework.security:spring-security-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
 
+    // -------------------------------------------------------------------------
+    // 6. Resilience4j for Circuit Breaker
+    // -------------------------------------------------------------------------
+    implementation("org.springframework.cloud:spring-cloud-starter-circuitbreaker-reactor-resilience4j")
+
+    // -------------------------------------------------------------------------
+    // 7. Logging Library
+    // -------------------------------------------------------------------------
+    implementation("com.github.MuhammadAounAnwar:logginglibrary:1.0.3")
+
+
     // ESSENTIAL for testing reactive (WebFlux/Gateway) components
     testImplementation("io.projectreactor:reactor-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
-kotlin {
+/* -------------------------------------------------------------------------
+ * Kotlin Compiler Configuration (SINGLE place)
+ * ------------------------------------------------------------------------- */
+tasks.withType<KotlinCompile>().configureEach {
     compilerOptions {
-        freeCompilerArgs.addAll("-Xjsr305=strict", "-Xannotation-default-target=param-property")
+        freeCompilerArgs.addAll(
+            "-Xjsr305=strict",
+            "-Xannotation-default-target=param-property"
+        )
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
     }
 }
 
