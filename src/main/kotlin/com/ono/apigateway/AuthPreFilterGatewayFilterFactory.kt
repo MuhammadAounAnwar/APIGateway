@@ -1,9 +1,11 @@
 package com.ono.apigateway
 
+import com.ono.apigateway.redis.RedisRateLimiter
 import io.jsonwebtoken.JwtException
 import org.slf4j.LoggerFactory
 import org.springframework.cloud.gateway.filter.GatewayFilter
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory
+import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Component
@@ -12,86 +14,108 @@ import reactor.core.publisher.Mono
 
 @Component
 class AuthPreFilterGatewayFilterFactory(
-    val jwtTokenProvider: JwtTokenProvider,
-    val routeValidator: RouteValidator
+    private val jwtTokenProvider: JwtTokenProvider,
+    private val routeValidator: RouteValidator,
+    private val rateLimiter: RedisRateLimiter,
+    private val redisTemplate: ReactiveRedisTemplate<String, String>
 ) : AbstractGatewayFilterFactory<AuthPreFilterGatewayFilterFactory.Config>(Config::class.java) {
 
-    private val log = LoggerFactory.getLogger(AuthPreFilterGatewayFilterFactory::class.java)
+    private val log = LoggerFactory.getLogger(javaClass)
 
     class Config
 
-    override fun apply(config: Config?): GatewayFilter? {
+    override fun apply(config: Config): GatewayFilter {
         return GatewayFilter { exchange, chain ->
 
             val request = exchange.request
-            val path = request.uri.path
+            val ip = request.remoteAddress?.address?.hostAddress ?: "unknown"
 
-
-            if (routeValidator.isSecured(path)) {
-                val authHeader = request.headers.getFirst(HttpHeaders.AUTHORIZATION)
-                if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-                    return@GatewayFilter chain.filter(exchange)
-                }
-
-                val token = authHeader.substring(7)
-                return@GatewayFilter try {
-                    jwtTokenProvider.validateToken(token)
-                    val email = jwtTokenProvider.extractEmail(token)
-
-                    val mutateRequest = request.mutate()
-                        .header("X-User-Id", email)
-                        .header(HttpHeaders.AUTHORIZATION, "Bearer $token")
-                        .build()
-
-                    chain.filter(exchange.mutate().request(mutateRequest).build())
-                } catch (ex: JwtException) {
-                    log.warn(
-                        "JWT validation failed",
-                        mapOf(
-                            "path" to path,
-                            "reason" to ex.message,
-                            "ip" to request.remoteAddress?.address?.hostAddress
+            rateLimiter.isAllowed(ip, limit = 100, windowSeconds = 60)
+                .flatMap { allowed ->
+                    if (!allowed) {
+                        return@flatMap onError(
+                            exchange,
+                            "Rate limit exceeded",
+                            HttpStatus.TOO_MANY_REQUESTS
                         )
-                    )
+                    }
 
-                    onError(exchange, "Invalid token", HttpStatus.UNAUTHORIZED)
+                    if (!routeValidator.isSecured(request.uri.path)) {
+                        return@flatMap chain.filter(exchange)
+                    }
 
-
-                } catch (ex: Exception) {
-
-                    log.warn(
-                        "An internal error occurred",
-                        mapOf(
-                            "path" to path,
-                            "reason" to ex.message,
-                            "ip" to request.remoteAddress?.address?.hostAddress
+                    val authHeader = request.headers.getFirst(HttpHeaders.AUTHORIZATION)
+                        ?: return@flatMap onError(
+                            exchange,
+                            "Missing Authorization header",
+                            HttpStatus.UNAUTHORIZED
                         )
-                    )
 
-                    onError(
-                        exchange,
-                        "An internal error occurred",
-                        HttpStatus.INTERNAL_SERVER_ERROR
-                    )
+                    if (!authHeader.startsWith("Bearer ")) {
+                        return@flatMap onError(
+                            exchange,
+                            "Invalid Authorization header",
+                            HttpStatus.UNAUTHORIZED
+                        )
+                    }
+
+                    val token = authHeader.substring(7)
+
+                    val jti = try {
+                        jwtTokenProvider.extractJti(token)
+                    } catch (ex: Exception) {
+                        return@flatMap onError(
+                            exchange,
+                            "Invalid token",
+                            HttpStatus.UNAUTHORIZED
+                        )
+                    }
+
+                    redisTemplate.hasKey("blacklist:jti:$jti")
+                        .flatMap { blacklisted ->
+                            if (blacklisted) {
+                                return@flatMap onError(
+                                    exchange,
+                                    "Token revoked",
+                                    HttpStatus.UNAUTHORIZED
+                                )
+                            }
+
+                            try {
+                                jwtTokenProvider.validateToken(token)
+                                val email = jwtTokenProvider.extractEmail(token)
+
+                                val mutatedRequest = request.mutate()
+                                    .header("X-User-Id", email)
+                                    .build()
+
+                                chain.filter(
+                                    exchange.mutate().request(mutatedRequest).build()
+                                )
+                            } catch (ex: JwtException) {
+                                onError(
+                                    exchange,
+                                    "Invalid or expired JWT",
+                                    HttpStatus.UNAUTHORIZED
+                                )
+                            }
+                        }
                 }
-            }
-
-            chain.filter(exchange)
         }
     }
 
-    private fun onError(exchange: ServerWebExchange, message: String, status: HttpStatus): Mono<Void> {
-        log.error(
-            "Gateway authentication error",
-            mapOf(
-                "status" to status.value(),
-                "path" to exchange.request.uri.path,
-                "message" to message
-            )
+    private fun onError(
+        exchange: ServerWebExchange,
+        message: String,
+        status: HttpStatus
+    ): Mono<Void> {
+        log.warn(
+            "Gateway security rejection: {} {}",
+            exchange.request.uri.path,
+            message
         )
 
-        val response = exchange.response
-        response.statusCode = status
-        return response.setComplete()
+        exchange.response.statusCode = status
+        return exchange.response.setComplete()
     }
 }

@@ -9,7 +9,6 @@ plugins {
     id("io.spring.dependency-management") version "1.1.7"
 }
 
-// ... rest of the build file
 
 group = "com.ono"
 version = "0.0.1-SNAPSHOT"
@@ -87,7 +86,12 @@ dependencies {
     // -------------------------------------------------------------------------
     // 7. Logging Library
     // -------------------------------------------------------------------------
-    implementation("com.github.MuhammadAounAnwar:logginglibrary:1.0.3")
+    implementation("com.github.MuhammadAounAnwar:logginglibrary:1.0.4")
+
+    // -------------------------------------------------------------------------
+    // 8. Redis Library
+    // -------------------------------------------------------------------------
+    implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive")
 
 
     // ESSENTIAL for testing reactive (WebFlux/Gateway) components

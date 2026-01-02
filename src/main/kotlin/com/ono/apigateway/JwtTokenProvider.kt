@@ -1,7 +1,7 @@
 package com.ono.apigateway
 
+import com.ono.logginglibrary.exception.InvalidTokenException
 import io.jsonwebtoken.Claims
-import io.jsonwebtoken.JwtException
 import io.jsonwebtoken.Jwts
 import io.jsonwebtoken.security.Keys
 import org.springframework.beans.factory.annotation.Value
@@ -24,7 +24,11 @@ class JwtTokenProvider(
     }
 
     fun extractEmail(token: String): String {
-        return extractClaims(token).subject ?: throw JwtException("Invalid JWT token")
+        return extractClaims(token).subject ?: throw InvalidTokenException("Invalid JWT token")
+    }
+
+    fun extractJti(token: String): String {
+        return extractClaims(token).id ?: throw InvalidTokenException("Invalid JWT token")
     }
 
     fun validateToken(token: String): Boolean {

@@ -20,6 +20,17 @@ spring:
     jwt:
       secret: ${JWT_SECRET}
 
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 10
+          max-idle: 5
+          min-idle: 2
+
   cloud:
     gateway:
       routes:
@@ -35,9 +46,12 @@ spring:
             # 2. The Filter list items must be indented under 'filters'
             - RewritePath=/api/auth/(?<remaining>.*), /${remaining}
             - name: CircuitBreaker
+            - name: RequestRateLimiter
               args:
                 name: authCB
                 fallbackUri: forward:/fallback/auth
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
 
         # ------------------------------------------------------------------
         # Route 2: UserClient (Secured Endpoints)
