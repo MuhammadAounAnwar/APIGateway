@@ -103,23 +103,36 @@ resilience4j:
     instances:
       authCB:
         slidingWindowSize: 10
+        minimumNumberOfCalls: 5
         failureRateThreshold: 50
-        waitDurationInOpenState: 10s
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
 
       userServiceCB:
         slidingWindowSize: 10
+        minimumNumberOfCalls: 5
         failureRateThreshold: 50
-        waitDurationInOpenState: 10s
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
 
       restaurantServiceCB:
         slidingWindowSize: 10
+        minimumNumberOfCalls: 5
         failureRateThreshold: 50
-        waitDurationInOpenState: 10s
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
 
       orderServiceCB:
         slidingWindowSize: 10
+        minimumNumberOfCalls: 5
         failureRateThreshold: 50
-        waitDurationInOpenState: 10s
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+
+  timelimiter:
+    instances:
+      userServiceCB:
+        timeoutDuration: 2s
 
 logging:
   level:

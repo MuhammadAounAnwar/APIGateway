@@ -10,16 +10,35 @@ import org.springframework.data.redis.serializer.StringRedisSerializer
 @Configuration
 class RedisConfig {
 
-    @Bean
-    fun reactiveRedisTemplate(
+    // -------------------------------------------
+    // 1. Rate Limiting Redis Template
+    // -------------------------------------------
+    @Bean("rateLimitRedisTemplate")
+    fun rateLimitRedisTemplate(
         factory: ReactiveRedisConnectionFactory
     ): ReactiveRedisTemplate<String, String> {
 
-        val serializer = RedisSerializationContext
+        val context = RedisSerializationContext
             .newSerializationContext<String, String>(StringRedisSerializer())
             .value(StringRedisSerializer())
             .build()
 
-        return ReactiveRedisTemplate(factory, serializer)
+        return ReactiveRedisTemplate(factory, context)
+    }
+
+    // -------------------------------------------
+    // 2. Cache / JWT / Blacklist Redis Template
+    // -------------------------------------------
+    @Bean("cacheRedisTemplate")
+    fun cacheRedisTemplate(
+        factory: ReactiveRedisConnectionFactory
+    ): ReactiveRedisTemplate<String, String> {
+
+        val context = RedisSerializationContext
+            .newSerializationContext<String, String>(StringRedisSerializer())
+            .value(StringRedisSerializer())
+            .build()
+
+        return ReactiveRedisTemplate(factory, context)
     }
 }

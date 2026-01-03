@@ -93,7 +93,6 @@ dependencies {
     // -------------------------------------------------------------------------
     implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive")
 
-
     // ESSENTIAL for testing reactive (WebFlux/Gateway) components
     testImplementation("io.projectreactor:reactor-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
