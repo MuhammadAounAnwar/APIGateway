@@ -33,70 +33,122 @@ spring:
 
   cloud:
     gateway:
+      default-filters:
+        # Adds correlation id if missing
+        - AddRequestHeader=X-Gateway, API-GATEWAY
+        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+
+      globalcors:
+        corsConfigurations:
+          '[/**]':
+            allowedOrigins: "*"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - PATCH
+              - OPTIONS
+            allowedHeaders: "*"
+
+      httpclient:
+        connect-timeout: 3000
+        response-timeout: 5s
+
       routes:
-        # ------------------------------------------------------------------
-        # Route 1: AuthClient (Public/Unsecured Endpoints)
-        # ------------------------------------------------------------------
-        - id: auth_route
-          uri: lb://AUTH-CLIENT
-          predicates:
-            # 1. The Predicate list item must be indented and standalone
-            - Path=/api/auth/** # <--- CORRECT: The list item ends here
-          filters: # <--- CORRECT: The 'filters' keyword is now a peer to 'predicates'
-            # 2. The Filter list items must be indented under 'filters'
-            - RewritePath=/api/auth/(?<remaining>.*), /${remaining}
-            - name: CircuitBreaker
-            - name: RequestRateLimiter
-              args:
-                name: authCB
-                fallbackUri: forward:/fallback/auth
-                redis-rate-limiter.replenishRate: 10
-                redis-rate-limiter.burstCapacity: 20
 
         # ------------------------------------------------------------------
-        # Route 2: UserClient (Secured Endpoints)
+        # Route 1: Authentication Service (PUBLIC)
         # ------------------------------------------------------------------
-        - id: user_route
-          uri: lb://USER-CLIENT
+        - id: auth_service
+          uri: lb://AUTHENTICATION-SERVICE
           predicates:
-            - Path=/api/user/**
+            - Path=/api/auth/**
           filters:
-            - RewritePath=/user/(?<remaining>.*), /${remaining}
+            - RewritePath=/api/auth/(?<segment>.*), /${segment}
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+            - name: CircuitBreaker
+              args:
+                name: authServiceCB
+                fallbackUri: forward:/fallback/auth
+
+        # ------------------------------------------------------------------
+        # Route 2: User Service (SECURED)
+        # ------------------------------------------------------------------
+        - id: user_service
+          uri: lb://USER-SERVICE
+          predicates:
+            - Path=/api/users/**
+          filters:
+            - RewritePath=/api/users/(?<segment>.*), /${segment}
             - name: AuthPreFilter
             - name: CircuitBreaker
               args:
                 name: userServiceCB
-                fallbackUri: forward:/fallback/user
-        
+                fallbackUri: forward:/fallback/users
+
         # ------------------------------------------------------------------
-        # Route 3: RestaurantClient
+        # Route 3: Restaurant Service (SECURED)
         # ------------------------------------------------------------------
-        - id: restaurant_route
-          uri: lb://RESTAURANT-CLIENT
+        - id: restaurant_service
+          uri: lb://RESTAURANT-SERVICE
           predicates:
             - Path=/api/restaurants/**
           filters:
-            - RewritePath=/restaurants/(?<remaining>.*), /${remaining}
+            - RewritePath=/api/restaurants/(?<segment>.*), /${segment}
             - name: AuthPreFilter
             - name: CircuitBreaker
               args:
                 name: restaurantServiceCB
-                fallbackUri: forward:/fallback/restaurant
+                fallbackUri: forward:/fallback/restaurants
 
         # ------------------------------------------------------------------
-        # Route 4: OrderClient
+        # Route 4: Order Service (SECURED)
         # ------------------------------------------------------------------
-        - id: order_route
-          uri: lb://ORDER-CLIENT
+        - id: order_service
+          uri: lb://ORDER-SERVICE
           predicates:
             - Path=/api/orders/**
           filters:
-            - RewritePath=/orders/(?<remaining>.*), /${remaining}
+            - RewritePath=/api/orders/(?<segment>.*), /${segment}
             - name: AuthPreFilter
             - name: CircuitBreaker
               args:
                 name: orderServiceCB
-                fallbackUri: forward:/fallback/order
+                fallbackUri: forward:/fallback/orders
+
+        # ------------------------------------------------------------------
+        # Route 5: Notification Service (SECURED)
+        # ------------------------------------------------------------------
+        - id: notification_service
+          uri: lb://NOTIFICATION-SERVICE
+          predicates:
+            - Path=/api/notifications/**
+          filters:
+            - RewritePath=/api/notifications/(?<segment>.*), /${segment}
+            - name: AuthPreFilter
+            - name: CircuitBreaker
+              args:
+                name: notificationServiceCB
+                fallbackUri: forward:/fallback/notifications
+
+        # ------------------------------------------------------------------
+        # Route 6: Email Service (INTERNAL / SECURED)
+        # ------------------------------------------------------------------
+        - id: email_service
+          uri: lb://EMAIL-SERVICE
+          predicates:
+            - Path=/api/emails/**
+          filters:
+            - RewritePath=/api/emails/(?<segment>.*), /${segment}
+            - name: AuthPreFilter
+            - name: CircuitBreaker
+              args:
+                name: emailServiceCB
+                fallbackUri: forward:/fallback/emails
 
 resilience4j:
   circuitbreaker:
@@ -129,15 +181,44 @@ resilience4j:
         waitDurationInOpenState: 30s
         permittedNumberOfCallsInHalfOpenState: 3
 
+      notificationServiceCB:
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+
+      emailServiceCB:
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+
   timelimiter:
     instances:
+      authServiceCB:
+        timeoutDuration: 3s
+
       userServiceCB:
-        timeoutDuration: 2s
+        timeoutDuration: 3s
+
+      restaurantServiceCB:
+        timeoutDuration: 3s
+
+      orderServiceCB:
+        timeoutDuration: 3s
+
+      notificationServiceCB:
+        timeoutDuration: 3s
+
+      emailServiceCB:
+        timeoutDuration: 3s
 
 logging:
   level:
-    org.springframework.cloud.gateway: DEBUG
-    reactor.netty.http.client: DEBUG
+    org.springframework.cloud.gateway: INFO
+    reactor.netty.http.client: INFO
 
 ono:
   logging:

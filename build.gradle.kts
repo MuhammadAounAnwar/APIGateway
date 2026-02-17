@@ -39,6 +39,7 @@ dependencies {
 
     // Service Discovery (for lb:// routing)
     implementation("org.springframework.cloud:spring-cloud-starter-netflix-eureka-client")
+    implementation("org.springframework.cloud:spring-cloud-starter-loadbalancer")
 
     // NOTE: 'spring-boot-starter-webflux' is generally included transitively by the Gateway starter.
     // Explicitly keeping it is harmless but unnecessary for modern Spring versions.
@@ -48,9 +49,7 @@ dependencies {
     // -------------------------------------------------------------------------
     // Reactive Security framework
     implementation("org.springframework.boot:spring-boot-starter-security")
-
-    // For integrating with external OAuth2 providers (Login with Google/Facebook)
-    implementation("org.springframework.boot:spring-boot-starter-oauth2-client")
+    implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
 
     // JWT processing - Required for custom JWT validation filters
     implementation("io.jsonwebtoken:jjwt-api:$jjwtVersion")
@@ -62,14 +61,17 @@ dependencies {
     // -------------------------------------------------------------------------
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
+    implementation("org.springframework.boot:spring-boot-starter-validation")
 
     developmentOnly("org.springframework.boot:spring-boot-devtools")
+    annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")
 
     // -------------------------------------------------------------------------
     // 4. Monitoring & Metrics
     // -------------------------------------------------------------------------
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("io.micrometer:micrometer-registry-prometheus")
+    implementation("io.micrometer:micrometer-tracing-bridge-brave")
 
     // -------------------------------------------------------------------------
     // 5. Testing
