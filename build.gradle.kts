@@ -22,7 +22,6 @@ java {
 
 // Ensure this Spring Cloud version is compatible with the Spring Boot version above (3.3.1 -> 2023.0.4 is compatible)
 val springCloudVersion = "2023.0.4"
-val jjwtVersion = "0.12.5"
 
 dependencyManagement {
     imports {
@@ -50,11 +49,6 @@ dependencies {
     // Reactive Security framework
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
-
-    // JWT processing - Required for custom JWT validation filters
-    implementation("io.jsonwebtoken:jjwt-api:$jjwtVersion")
-    runtimeOnly("io.jsonwebtoken:jjwt-impl:$jjwtVersion")
-    runtimeOnly("io.jsonwebtoken:jjwt-jackson:$jjwtVersion")
 
     // -------------------------------------------------------------------------
     // 3. Kotlin & Utilities

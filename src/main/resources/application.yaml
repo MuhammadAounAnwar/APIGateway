@@ -73,7 +73,7 @@ spring:
             - name: CircuitBreaker
               args:
                 name: authServiceCB
-                fallbackUri: forward:/fallback/auth
+                fallbackUri: forward:/fallback/auth-service
 
         # ------------------------------------------------------------------
         # Route 2: User Service (SECURED)
@@ -88,7 +88,7 @@ spring:
             - name: CircuitBreaker
               args:
                 name: userServiceCB
-                fallbackUri: forward:/fallback/users
+                fallbackUri: forward:/fallback/user-service
 
         # ------------------------------------------------------------------
         # Route 3: Restaurant Service (SECURED)
@@ -103,7 +103,7 @@ spring:
             - name: CircuitBreaker
               args:
                 name: restaurantServiceCB
-                fallbackUri: forward:/fallback/restaurants
+                fallbackUri: forward:/fallback/restaurant-service
 
         # ------------------------------------------------------------------
         # Route 4: Order Service (SECURED)
@@ -118,7 +118,7 @@ spring:
             - name: CircuitBreaker
               args:
                 name: orderServiceCB
-                fallbackUri: forward:/fallback/orders
+                fallbackUri: forward:/fallback/order-service
 
         # ------------------------------------------------------------------
         # Route 5: Notification Service (SECURED)
@@ -133,7 +133,7 @@ spring:
             - name: CircuitBreaker
               args:
                 name: notificationServiceCB
-                fallbackUri: forward:/fallback/notifications
+                fallbackUri: forward:/fallback/notification-service
 
         # ------------------------------------------------------------------
         # Route 6: Email Service (INTERNAL / SECURED)
@@ -148,12 +148,12 @@ spring:
             - name: CircuitBreaker
               args:
                 name: emailServiceCB
-                fallbackUri: forward:/fallback/emails
+                fallbackUri: forward:/fallback/email-service
 
 resilience4j:
   circuitbreaker:
     instances:
-      authCB:
+      authServiceCB:
         slidingWindowSize: 10
         minimumNumberOfCalls: 5
         failureRateThreshold: 50

@@ -5,56 +5,53 @@ import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
+import org.springframework.http.server.reactive.ServerHttpRequest
+import java.time.Instant
 
 @RestController
 @RequestMapping("/fallback")
 class GatewayFallbackController {
 
-    @GetMapping("/auth")
-    fun authServiceFallback(): ResponseEntity<Map<String, Any>> =
-        ResponseEntity
-            .status(HttpStatus.SERVICE_UNAVAILABLE)
-            .body(
-                mapOf(
-                    "code" to "SERVICE_UNAVAILABLE",
-                    "message" to "User service is temporarily unavailable",
-                    "service" to "USER-SERVICE"
-                )
-            )
+    companion object {
+        private const val CORRELATION_ID_HEADER = "X-Correlation-Id"
+    }
 
-    @GetMapping("/user")
-    fun userServiceFallback(): ResponseEntity<Map<String, Any>> =
-        ResponseEntity
-            .status(HttpStatus.SERVICE_UNAVAILABLE)
-            .body(
-                mapOf(
-                    "code" to "SERVICE_UNAVAILABLE",
-                    "message" to "User service is temporarily unavailable",
-                    "service" to "USER-SERVICE"
-                )
-            )
+    private fun buildFallbackResponse(
+        request: ServerHttpRequest,
+        serviceName: String,
+        message: String
+    ): ResponseEntity<Map<String, Any>> {
 
-    @GetMapping("/restaurant")
-    fun restaurantServiceFallback(): ResponseEntity<Map<String, Any>> =
-        ResponseEntity
-            .status(HttpStatus.SERVICE_UNAVAILABLE)
-            .body(
-                mapOf(
-                    "code" to "SERVICE_UNAVAILABLE",
-                    "message" to "User service is temporarily unavailable",
-                    "service" to "USER-SERVICE"
-                )
-            )
+        val correlationId =
+            request.headers.getFirst(CORRELATION_ID_HEADER) ?: "UNKNOWN"
 
-    @GetMapping("/order")
-    fun orderServiceFallback(): ResponseEntity<Map<String, Any>> =
-        ResponseEntity
+        val body = mapOf(
+            "timestamp" to Instant.now().toString(),
+            "status" to HttpStatus.SERVICE_UNAVAILABLE.value(),
+            "error" to HttpStatus.SERVICE_UNAVAILABLE.reasonPhrase,
+            "message" to message,
+            "service" to serviceName,
+            "path" to request.uri.path,
+            "correlationId" to correlationId
+        )
+
+        return ResponseEntity
             .status(HttpStatus.SERVICE_UNAVAILABLE)
-            .body(
-                mapOf(
-                    "code" to "SERVICE_UNAVAILABLE",
-                    "message" to "Order service is currently down",
-                    "service" to "ORDER-SERVICE"
-                )
-            )
+            .body(body)
+    }
+
+    @GetMapping("/{service}")
+    fun serviceFallback(
+        request: ServerHttpRequest,
+        @org.springframework.web.bind.annotation.PathVariable service: String
+    ): ResponseEntity<Map<String, Any>> {
+
+        val normalizedService = service.uppercase()
+
+        return buildFallbackResponse(
+            request,
+            normalizedService,
+            "$normalizedService is temporarily unavailable"
+        )
+    }
 }

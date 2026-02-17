@@ -5,17 +5,13 @@ import com.ono.apigateway.redis.JwtCacheService
 import com.ono.apigateway.redis.RedisRateLimitService
 import org.slf4j.LoggerFactory
 import org.springframework.cloud.gateway.filter.GatewayFilter
-import org.springframework.cloud.gateway.filter.GatewayFilterChain
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory
-import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
-import org.springframework.stereotype.Component
+import org.springframework.security.core.Authentication
 import org.springframework.web.server.ServerWebExchange
 import reactor.core.publisher.Mono
 
-@Component
 class AuthPreFilterGatewayFilterFactory(
-    private val jwtTokenProvider: JwtTokenProvider,
     private val routeValidator: RouteValidator,
     private val rateLimitService: RedisRateLimitService,
     private val blacklistService: JwtBlacklistService,
@@ -23,6 +19,12 @@ class AuthPreFilterGatewayFilterFactory(
 ) : AbstractGatewayFilterFactory<AuthPreFilterGatewayFilterFactory.Config>(Config::class.java) {
 
     private val log = LoggerFactory.getLogger(javaClass)
+
+    companion object {
+        private const val CORRELATION_ID_HEADER = "X-Correlation-Id"
+        private const val USER_ID_HEADER = "X-User-Id"
+        private const val USER_ROLES_HEADER = "X-User-Roles"
+    }
 
     class Config
 
@@ -33,36 +35,65 @@ class AuthPreFilterGatewayFilterFactory(
             val path = request.uri.path
             val ip = request.remoteAddress?.address?.hostAddress ?: "unknown"
 
-            // 1️⃣ Rate limiting
+            // CorrelationId is guaranteed by CorrelationIdFilter (GlobalFilter)
+            val correlationId =
+                request.headers.getFirst(CORRELATION_ID_HEADER) ?: "UNKNOWN"
+
+            // 1️⃣ Rate limiting (IP based)
             rateLimitService.isAllowed(ip, 100, 60)
                 .flatMap { allowed ->
-                    if (!allowed) return@flatMap reject(exchange, HttpStatus.TOO_MANY_REQUESTS)
+                    if (!allowed) {
+                        return@flatMap reject(exchange, HttpStatus.TOO_MANY_REQUESTS)
+                    }
 
-                    // 2️⃣ Public routes
+                    // 2️⃣ Public routes bypass
                     if (!routeValidator.isSecured(path)) {
                         return@flatMap chain.filter(exchange)
                     }
 
-                    val token = extractToken(exchange)
-                        ?: return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
+                    // 3️⃣ JWT already validated by Spring Security
+                    exchange.getPrincipal<Authentication>()
+                        .switchIfEmpty(reject(exchange, HttpStatus.UNAUTHORIZED).then(Mono.empty()))
+                        .cast(Authentication::class.java)
+                        .flatMap { authentication ->
 
-                    val jti = runCatching { jwtTokenProvider.extractJti(token) }
-                        .getOrElse { return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED) }
+                            val principal = authentication.principal
 
-                    // 3️⃣ Blacklist check
-                    blacklistService.isBlacklisted(jti)
-                        .flatMap { blacklisted ->
-                            if (blacklisted) return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
+                            if (principal !is org.springframework.security.oauth2.jwt.Jwt) {
+                                return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
+                            }
 
-                            // 4️⃣ Cache lookup
-                            jwtCacheService.getCachedUser(jti)
-                                .flatMap { cachedUser ->
-                                    if (cachedUser != null) {
-                                        return@flatMap chain.filter(mutate(exchange, cachedUser))
+                            val userId = principal.subject
+                                ?: return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
+
+                            val roles = authentication.authorities
+                                .joinToString(",") { it.authority }
+
+                            val jti = principal.id
+                                ?: return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
+
+                            // 4️⃣ Blacklist check (logout invalidation support)
+                            blacklistService.isBlacklisted(jti)
+                                .flatMap { blacklisted ->
+                                    if (blacklisted) {
+                                        return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
                                     }
 
-                                    // 5️⃣ Full validation
-                                    validateAndCache(exchange, chain, token, jti)
+                                    // 5️⃣ Cache token until expiration (dynamic TTL)
+                                    val expiresAt = principal.expiresAt
+                                    val ttlSeconds = expiresAt?.let {
+                                        java.time.Duration.between(
+                                            java.time.Instant.now(),
+                                            it
+                                        ).seconds.coerceAtLeast(0)
+                                    } ?: 0
+
+                                    jwtCacheService.cache(jti, userId, ttlSeconds)
+                                        .then(
+                                            chain.filter(
+                                                mutate(exchange, userId, roles, correlationId)
+                                            )
+                                        )
                                 }
                         }
                 }
@@ -71,43 +102,56 @@ class AuthPreFilterGatewayFilterFactory(
 
     // ---------------- Helper Methods ----------------
 
-    private fun validateAndCache(
+    private fun mutate(
         exchange: ServerWebExchange,
-        chain: GatewayFilterChain,
-        token: String,
-        jti: String
-    ): Mono<Void> {
-        return try {
-            jwtTokenProvider.validateToken(token)
-            val userId = jwtTokenProvider.extractEmail(token)
-            val ttl = jwtTokenProvider.getRemainingValiditySeconds(token)
+        userId: String,
+        roles: String,
+        correlationId: String
+    ): ServerWebExchange {
 
-            jwtCacheService.cache(jti, userId, ttl)
-                .then(chain.filter(mutate(exchange, userId)))
-        } catch (ex: Exception) {
-            reject(exchange, HttpStatus.UNAUTHORIZED)
-        }
-    }
-
-    private fun extractToken(exchange: ServerWebExchange): String? {
-        val header = exchange.request.headers.getFirst(HttpHeaders.AUTHORIZATION)
-        return if (header?.startsWith("Bearer ") == true) header.substring(7) else null
-    }
-
-    private fun mutate(exchange: ServerWebExchange, userId: String): ServerWebExchange {
         return exchange.mutate()
             .request(
                 exchange.request.mutate()
-                    .header("X-User-Id", userId)
+                    .header(USER_ID_HEADER, userId)
+                    .header(USER_ROLES_HEADER, roles)
+                    .header(CORRELATION_ID_HEADER, correlationId)
                     .build()
             )
             .build()
     }
 
     private fun reject(exchange: ServerWebExchange, status: HttpStatus): Mono<Void> {
-        log.warn("Gateway rejected: {} {}", status, exchange.request.uri.path)
+
+        val correlationId =
+            exchange.request.headers.getFirst(CORRELATION_ID_HEADER) ?: "UNKNOWN"
+
+        log.warn(
+            "Gateway rejection -> status: {}, method: {}, path: {}, ip: {}, correlationId: {}",
+            status.value(),
+            exchange.request.method,
+            exchange.request.uri.path,
+            exchange.request.remoteAddress?.address?.hostAddress ?: "unknown",
+            correlationId
+        )
+
         exchange.response.statusCode = status
-        return exchange.response.setComplete()
+        exchange.response.headers.add(CORRELATION_ID_HEADER, correlationId)
+        exchange.response.headers.contentType =
+            org.springframework.http.MediaType.APPLICATION_JSON
+
+        val body = """
+            {
+              "timestamp": "${java.time.Instant.now()}",
+              "status": ${status.value()},
+              "error": "${status.reasonPhrase}",
+              "path": "${exchange.request.uri.path}",
+              "correlationId": "$correlationId"
+            }
+        """.trimIndent()
+
+        val buffer = exchange.response.bufferFactory()
+            .wrap(body.toByteArray())
+
+        return exchange.response.writeWith(Mono.just(buffer))
     }
 }
-
