@@ -39,32 +39,41 @@ class AuthPreFilterGatewayFilterFactory(
             val correlationId =
                 request.headers.getFirst(CORRELATION_ID_HEADER) ?: "UNKNOWN"
 
-            // 1️⃣ Rate limiting (IP based)
-            rateLimitService.isAllowed(ip, 100, 60)
-                .flatMap { allowed ->
-                    if (!allowed) {
-                        return@flatMap reject(exchange, HttpStatus.TOO_MANY_REQUESTS)
+            // 1️⃣ Public routes → rate limit by IP (anonymous traffic)
+            if (!routeValidator.isSecured(path)) {
+                return@GatewayFilter rateLimitService
+                    .isAllowed("ip:$ip", 50, 60)
+                    .flatMap { allowed ->
+                        if (!allowed) {
+                            reject(exchange, HttpStatus.TOO_MANY_REQUESTS)
+                        } else {
+                            chain.filter(exchange)
+                        }
+                    }
+            }
+
+            // 3️⃣ JWT already validated by Spring Security
+            exchange.getPrincipal<Authentication>()
+                .switchIfEmpty(reject(exchange, HttpStatus.UNAUTHORIZED).then(Mono.empty()))
+                .cast(Authentication::class.java)
+                .flatMap { authentication ->
+
+                    val principal = authentication.principal
+
+                    if (principal !is org.springframework.security.oauth2.jwt.Jwt) {
+                        return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
                     }
 
-                    // 2️⃣ Public routes bypass
-                    if (!routeValidator.isSecured(path)) {
-                        return@flatMap chain.filter(exchange)
-                    }
+                    val userId = principal.subject
+                        ?: return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
 
-                    // 3️⃣ JWT already validated by Spring Security
-                    exchange.getPrincipal<Authentication>()
-                        .switchIfEmpty(reject(exchange, HttpStatus.UNAUTHORIZED).then(Mono.empty()))
-                        .cast(Authentication::class.java)
-                        .flatMap { authentication ->
-
-                            val principal = authentication.principal
-
-                            if (principal !is org.springframework.security.oauth2.jwt.Jwt) {
-                                return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
+                    // 2️⃣ Per-user rate limiting (authenticated traffic)
+                    return@flatMap rateLimitService
+                        .isAllowed("user:$userId", 200, 60)
+                        .flatMap { allowed ->
+                            if (!allowed) {
+                                return@flatMap reject(exchange, HttpStatus.TOO_MANY_REQUESTS)
                             }
-
-                            val userId = principal.subject
-                                ?: return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
 
                             val roles = authentication.authorities
                                 .joinToString(",") { it.authority }
@@ -72,14 +81,14 @@ class AuthPreFilterGatewayFilterFactory(
                             val jti = principal.id
                                 ?: return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
 
-                            // 4️⃣ Blacklist check (logout invalidation support)
+                            // 3️⃣ Blacklist check (logout invalidation support)
                             blacklistService.isBlacklisted(jti)
                                 .flatMap { blacklisted ->
                                     if (blacklisted) {
                                         return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
                                     }
 
-                                    // 5️⃣ Cache token until expiration (dynamic TTL)
+                                    // 4️⃣ Cache token until expiration (dynamic TTL)
                                     val expiresAt = principal.expiresAt
                                     val ttlSeconds = expiresAt?.let {
                                         java.time.Duration.between(

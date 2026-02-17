@@ -89,6 +89,12 @@ dependencies {
     // -------------------------------------------------------------------------
     implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive")
 
+    // -------------------------------------------------------------------------
+    // 9. Tracing Library
+    // -------------------------------------------------------------------------
+    implementation("io.micrometer:micrometer-tracing-bridge-otel")
+    implementation("io.opentelemetry:opentelemetry-exporter-otlp")
+
     // ESSENTIAL for testing reactive (WebFlux/Gateway) components
     testImplementation("io.projectreactor:reactor-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
