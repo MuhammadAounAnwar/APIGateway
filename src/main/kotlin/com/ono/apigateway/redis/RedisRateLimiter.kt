@@ -9,16 +9,62 @@ import java.time.Duration
 class RedisRateLimiter(
     private val redisTemplate: ReactiveRedisTemplate<String, String>
 ) {
-    fun isAllowed(key: String, limit: Int, windowSeconds: Long): Mono<Boolean> {
-        val redisKey = RedisKeys.rateByIp(key)
 
-        return redisTemplate.opsForValue()
-            .increment(redisKey)
+    /**
+     * Fixed-window rate limiting
+     * key should already be fully constructed (ip or user based)
+     */
+    fun isAllowed(key: String, limit: Int, windowSeconds: Long): Mono<Boolean> {
+
+        return redisTemplate
+            .opsForValue()
+            .increment(key)
             .flatMap { count ->
                 if (count == 1L) {
-                    redisTemplate.expire(redisKey, Duration.ofSeconds(windowSeconds))
+                    // Set expiration only when key is first created
+                    redisTemplate
+                        .expire(key, Duration.ofSeconds(windowSeconds))
+                        .thenReturn(count <= limit)
+                } else {
+                    Mono.just(count <= limit)
                 }
-                Mono.just(count <= limit)
             }
+            .onErrorResume {
+                // Fail-open strategy (do not block traffic if Redis fails)
+                Mono.just(true)
+            }
+    }
+
+    /**
+     * Get remaining quota within current window
+     */
+    fun remainingQuota(key: String, limit: Int): Mono<Long> {
+        return redisTemplate
+            .opsForValue()
+            .get(key)
+            .map { value ->
+                val used = value.toLongOrNull() ?: 0L
+                (limit - used).coerceAtLeast(0L)
+            }
+            .defaultIfEmpty(limit.toLong())
+    }
+
+    /**
+     * Reset rate limit manually (rare use case)
+     */
+    fun reset(key: String): Mono<Boolean> {
+        return redisTemplate
+            .delete(key)
+            .map { it > 0 }
+    }
+
+    /**
+     * Get remaining time-to-live for the window
+     */
+    fun getRemainingTtl(key: String): Mono<Duration> {
+        return redisTemplate
+            .getExpire(key)
+            .filter { it > Duration.ofSeconds(0) }
+            .map { it }
     }
 }

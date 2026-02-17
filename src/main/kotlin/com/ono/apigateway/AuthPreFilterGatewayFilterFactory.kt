@@ -1,21 +1,23 @@
 package com.ono.apigateway
 
-import com.ono.apigateway.redis.JwtBlacklistService
-import com.ono.apigateway.redis.JwtCacheService
-import com.ono.apigateway.redis.RedisRateLimitService
+import com.ono.apigateway.redis.TokenStoreService
+import com.ono.apigateway.redis.RedisKeys
+import com.ono.apigateway.redis.RedisRateLimiter
 import org.slf4j.LoggerFactory
 import org.springframework.cloud.gateway.filter.GatewayFilter
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory
 import org.springframework.http.HttpStatus
 import org.springframework.security.core.Authentication
+import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.server.ServerWebExchange
 import reactor.core.publisher.Mono
+import java.time.Duration
+import java.time.Instant
 
 class AuthPreFilterGatewayFilterFactory(
     private val routeValidator: RouteValidator,
-    private val rateLimitService: RedisRateLimitService,
-    private val blacklistService: JwtBlacklistService,
-    private val jwtCacheService: JwtCacheService
+    private val rateLimiter: RedisRateLimiter,
+    private val tokenStoreService: TokenStoreService
 ) : AbstractGatewayFilterFactory<AuthPreFilterGatewayFilterFactory.Config>(Config::class.java) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -24,6 +26,9 @@ class AuthPreFilterGatewayFilterFactory(
         private const val CORRELATION_ID_HEADER = "X-Correlation-Id"
         private const val USER_ID_HEADER = "X-User-Id"
         private const val USER_ROLES_HEADER = "X-User-Roles"
+        private const val RATE_LIMIT_REMAINING = "X-RateLimit-Remaining"
+        private const val RATE_LIMIT_LIMIT = "X-RateLimit-Limit"
+        private const val RATE_LIMIT_RESET = "X-RateLimit-Reset"
     }
 
     class Config
@@ -34,75 +39,63 @@ class AuthPreFilterGatewayFilterFactory(
             val request = exchange.request
             val path = request.uri.path
             val ip = request.remoteAddress?.address?.hostAddress ?: "unknown"
+            val correlationId = request.headers.getFirst(CORRELATION_ID_HEADER) ?: "UNKNOWN"
 
-            // CorrelationId is guaranteed by CorrelationIdFilter (GlobalFilter)
-            val correlationId =
-                request.headers.getFirst(CORRELATION_ID_HEADER) ?: "UNKNOWN"
-
-            // 1️⃣ Public routes → rate limit by IP (anonymous traffic)
+            // ---------------- PUBLIC ROUTES ----------------
             if (!routeValidator.isSecured(path)) {
-                return@GatewayFilter rateLimitService
-                    .isAllowed("ip:$ip", 50, 60)
+                val key = RedisKeys.rateByIp(ip)
+                return@GatewayFilter rateLimiter
+                    .isAllowed(key, 50, 60)
                     .flatMap { allowed ->
-                        if (!allowed) {
-                            reject(exchange, HttpStatus.TOO_MANY_REQUESTS)
-                        } else {
-                            chain.filter(exchange)
-                        }
+                        if (!allowed) return@flatMap reject(exchange, HttpStatus.TOO_MANY_REQUESTS)
+
+                        addRateLimitHeaders(exchange, key, 50)
+                            .then(chain.filter(exchange))
                     }
             }
 
-            // 3️⃣ JWT already validated by Spring Security
+            // ---------------- SECURED ROUTES ----------------
             exchange.getPrincipal<Authentication>()
                 .switchIfEmpty(reject(exchange, HttpStatus.UNAUTHORIZED).then(Mono.empty()))
                 .cast(Authentication::class.java)
                 .flatMap { authentication ->
 
-                    val principal = authentication.principal
-
-                    if (principal !is org.springframework.security.oauth2.jwt.Jwt) {
-                        return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
-                    }
-
-                    val userId = principal.subject
+                    val jwt = authentication.principal as? Jwt
                         ?: return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
 
-                    // 2️⃣ Per-user rate limiting (authenticated traffic)
-                    return@flatMap rateLimitService
-                        .isAllowed("user:$userId", 200, 60)
+                    val userId = jwt.subject
+                        ?: return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
+
+                    val jti = jwt.id
+                        ?: return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
+
+                    val roles = authentication.authorities.joinToString(",") { it.authority }
+
+                    val rateKey = RedisKeys.rateByUser(userId)
+
+                    // Per-user rate limiting
+                    rateLimiter.isAllowed(rateKey, 200, 60)
                         .flatMap { allowed ->
-                            if (!allowed) {
-                                return@flatMap reject(exchange, HttpStatus.TOO_MANY_REQUESTS)
-                            }
+                            if (!allowed) return@flatMap reject(exchange, HttpStatus.TOO_MANY_REQUESTS)
 
-                            val roles = authentication.authorities
-                                .joinToString(",") { it.authority }
-
-                            val jti = principal.id
-                                ?: return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
-
-                            // 3️⃣ Blacklist check (logout invalidation support)
-                            blacklistService.isBlacklisted(jti)
+                            // Blacklist check (fail-safe)
+                            tokenStoreService.isBlacklisted(jti)
                                 .flatMap { blacklisted ->
-                                    if (blacklisted) {
-                                        return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
-                                    }
+                                    if (blacklisted) return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
 
-                                    // 4️⃣ Cache token until expiration (dynamic TTL)
-                                    val expiresAt = principal.expiresAt
-                                    val ttlSeconds = expiresAt?.let {
-                                        java.time.Duration.between(
-                                            java.time.Instant.now(),
-                                            it
-                                        ).seconds.coerceAtLeast(0)
+                                    // Cache JTI until token expiration (fail-open)
+                                    val ttlSeconds = jwt.expiresAt?.let {
+                                        Duration.between(Instant.now(), it).seconds.coerceAtLeast(0)
                                     } ?: 0
 
-                                    jwtCacheService.cache(jti, userId, ttlSeconds)
-                                        .then(
-                                            chain.filter(
-                                                mutate(exchange, userId, roles, correlationId)
-                                            )
-                                        )
+                                    val cacheMono = if (ttlSeconds > 0) {
+                                        tokenStoreService.cacheIfAbsent(jti, userId, ttlSeconds)
+                                    } else Mono.empty()
+
+                                    cacheMono.then(
+                                        addRateLimitHeaders(exchange, rateKey, 200)
+                                            .then(chain.filter(mutate(exchange, userId, roles, correlationId)))
+                                    )
                                 }
                         }
                 }
@@ -117,7 +110,6 @@ class AuthPreFilterGatewayFilterFactory(
         roles: String,
         correlationId: String
     ): ServerWebExchange {
-
         return exchange.mutate()
             .request(
                 exchange.request.mutate()
@@ -129,10 +121,34 @@ class AuthPreFilterGatewayFilterFactory(
             .build()
     }
 
+    private fun addRateLimitHeaders(
+        exchange: ServerWebExchange,
+        key: String,
+        limit: Int
+    ): Mono<Void> {
+
+        return rateLimiter
+            .remainingQuota(key, limit)
+            .zipWith(rateLimiter.getRemainingTtl(key).defaultIfEmpty(Duration.ZERO))
+            .doOnNext { tuple ->
+                val remaining = tuple.t1
+                val ttl = tuple.t2
+
+                val resetEpoch = Instant.now()
+                    .plusSeconds(ttl.seconds)
+                    .epochSecond
+
+                exchange.response.headers.set(RATE_LIMIT_LIMIT, limit.toString())
+                exchange.response.headers.set(RATE_LIMIT_REMAINING, remaining.toString())
+                exchange.response.headers.set(RATE_LIMIT_RESET, resetEpoch.toString())
+            }
+            .then()
+    }
+
     private fun reject(exchange: ServerWebExchange, status: HttpStatus): Mono<Void> {
 
-        val correlationId =
-            exchange.request.headers.getFirst(CORRELATION_ID_HEADER) ?: "UNKNOWN"
+        val correlationId = exchange.request.headers
+            .getFirst(CORRELATION_ID_HEADER) ?: "UNKNOWN"
 
         log.warn(
             "Gateway rejection -> status: {}, method: {}, path: {}, ip: {}, correlationId: {}",
@@ -145,12 +161,11 @@ class AuthPreFilterGatewayFilterFactory(
 
         exchange.response.statusCode = status
         exchange.response.headers.add(CORRELATION_ID_HEADER, correlationId)
-        exchange.response.headers.contentType =
-            org.springframework.http.MediaType.APPLICATION_JSON
+        exchange.response.headers.contentType = org.springframework.http.MediaType.APPLICATION_JSON
 
         val body = """
             {
-              "timestamp": "${java.time.Instant.now()}",
+              "timestamp": "${Instant.now()}",
               "status": ${status.value()},
               "error": "${status.reasonPhrase}",
               "path": "${exchange.request.uri.path}",
@@ -158,9 +173,7 @@ class AuthPreFilterGatewayFilterFactory(
             }
         """.trimIndent()
 
-        val buffer = exchange.response.bufferFactory()
-            .wrap(body.toByteArray())
-
+        val buffer = exchange.response.bufferFactory().wrap(body.toByteArray())
         return exchange.response.writeWith(Mono.just(buffer))
     }
 }

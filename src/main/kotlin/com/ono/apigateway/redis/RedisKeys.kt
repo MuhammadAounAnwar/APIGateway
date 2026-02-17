@@ -2,14 +2,45 @@ package com.ono.apigateway.redis
 
 object RedisKeys {
 
-    fun rateByIp(ip: String) = "rate:ip:$ip"
-    fun jtiKey(jti: String) = "jwt:cache:jti:$jti"
+    // ---------------------------------------------------------------------
+    // Global namespace prefix (prevents collision with other services)
+    // ---------------------------------------------------------------------
+    private const val PREFIX = "gateway"
 
-    fun rateByUser(userId: String) = "rate:user:$userId"
+    // ---------------------------------------------------------------------
+    // Rate Limiting Keys
+    // ---------------------------------------------------------------------
 
-    fun blacklistToken(token: String) = "blacklist:token:$token"
+    fun rateByIp(ip: String): String =
+        "$PREFIX:rate:ip:$ip"
 
-    fun jwtBlacklist(jti: String) = "blacklist:jti:$jti"
+    fun rateByUser(userId: String): String =
+        "$PREFIX:rate:user:$userId"
 
-    fun jwtCache(token: String) = "jwt:cache:$token"
+    // ---------------------------------------------------------------------
+    // JWT Cache Keys
+    // ---------------------------------------------------------------------
+
+    fun jwtCacheByJti(jti: String): String =
+        "$PREFIX:jwt:cache:jti:$jti"
+
+    fun jwtCacheByToken(token: String): String =
+        "$PREFIX:jwt:cache:token:$token"
+
+    // ---------------------------------------------------------------------
+    // JWT Blacklist Keys
+    // ---------------------------------------------------------------------
+
+    fun jwtBlacklist(jti: String): String =
+        "$PREFIX:jwt:blacklist:jti:$jti"
+
+    fun blacklistToken(token: String): String =
+        "$PREFIX:jwt:blacklist:token:$token"
+
+    // ---------------------------------------------------------------------
+    // Utility (optional future use)
+    // ---------------------------------------------------------------------
+
+    fun build(vararg parts: String): String =
+        listOf(PREFIX, *parts).joinToString(":")
 }
