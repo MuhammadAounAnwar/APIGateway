@@ -25,17 +25,20 @@ spring:
         response-timeout: 5s
 
 ############################################
-# RESILIENCE (STRICT FOR PROD)
+# RESILIENCE (STRICT + ISOLATED FOR PROD)
 ############################################
 
 resilience4j:
+
   circuitbreaker:
     configs:
       default:
+        registerHealthIndicator: true
         slidingWindowSize: 100
         minimumNumberOfCalls: 30
         failureRateThreshold: 50
         slowCallRateThreshold: 50
+        slowCallDurationThreshold: 3s
         waitDurationInOpenState: 30s
         permittedNumberOfCallsInHalfOpenState: 10
 
@@ -45,8 +48,10 @@ resilience4j:
 
       orderStrict:
         baseConfig: default
+        minimumNumberOfCalls: 30
         failureRateThreshold: 30
         slowCallRateThreshold: 30
+        slowCallDurationThreshold: 2s
         waitDurationInOpenState: 45s
         permittedNumberOfCallsInHalfOpenState: 5
 
@@ -62,14 +67,28 @@ resilience4j:
         waitDuration: 300ms
 
       orderStrict:
-        maxAttempts: 1
-        waitDuration: 200ms
+        maxAttempts: 2
+        waitDuration: 250ms
 
   bulkhead:
     instances:
       default:
         maxConcurrentCalls: 30
         maxWaitDuration: 0
+
+      orderStrict:
+        maxConcurrentCalls: 20
+        maxWaitDuration: 0
+
+      emailLenient:
+        maxConcurrentCalls: 10
+        maxWaitDuration: 0
+
+  timelimiter:
+    instances:
+      default:
+        timeoutDuration: 4s
+        cancelRunningFuture: true
 
 ############################################
 # OBSERVABILITY (REDUCED FOR PROD)
@@ -78,4 +97,4 @@ resilience4j:
 management:
   tracing:
     sampling:
-      probability: 0.2   # reduce overhead in prod
+      probability: 0.2

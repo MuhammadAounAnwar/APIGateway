@@ -32,10 +32,12 @@ resilience4j:
   circuitbreaker:
     configs:
       default:
+        registerHealthIndicator: true
         slidingWindowSize: 10
         minimumNumberOfCalls: 5
         failureRateThreshold: 70
         slowCallRateThreshold: 70
+        slowCallDurationThreshold: 3s
         waitDurationInOpenState: 10s
 
     instances:
@@ -53,20 +55,52 @@ resilience4j:
         waitDurationInOpenState: 5s
 
   retry:
-    instances:
+    configs:
       default:
         maxAttempts: 3
         waitDuration: 500ms
 
+    instances:
+      default:
+        baseConfig: default
+
       orderStrict:
+        baseConfig: default
         maxAttempts: 2
         waitDuration: 400ms
+
+      emailLenient:
+        baseConfig: default
+        maxAttempts: 4
+        waitDuration: 600ms
 
   bulkhead:
     instances:
       default:
         maxConcurrentCalls: 50
         maxWaitDuration: 0
+
+      orderStrict:
+        maxConcurrentCalls: 30
+        maxWaitDuration: 0
+
+      emailLenient:
+        maxConcurrentCalls: 20
+        maxWaitDuration: 0
+
+  timelimiter:
+    instances:
+      default:
+        timeoutDuration: 6s
+        cancelRunningFuture: true
+
+      orderStrict:
+        timeoutDuration: 4s
+        cancelRunningFuture: true
+
+      emailLenient:
+        timeoutDuration: 8s
+        cancelRunningFuture: true
 
 ############################################
 # OBSERVABILITY (FULL FOR DEV)
@@ -76,3 +110,12 @@ management:
   tracing:
     sampling:
       probability: 1.0   # trace everything in dev
+
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+  endpoint:
+    health:
+      show-details: always

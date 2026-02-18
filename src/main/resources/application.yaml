@@ -22,6 +22,7 @@ spring:
         - AddRequestHeader=X-Gateway, API-GATEWAY
         - AddResponseHeader=X-Gateway-Version, v1
         - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+        - RemoveResponseHeader=Server
 
       globalcors:
         corsConfigurations:
@@ -69,7 +70,14 @@ spring:
           filters:
             - RewritePath=/api/users/(?<segment>.*), /${segment}
             - name: AuthPreFilter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: ${USER_RATE_LIMIT:20}
+                redis-rate-limiter.burstCapacity: ${USER_BURST_CAPACITY:40}
             - name: Retry
+              args:
+                name: default
+            - name: TimeLimiter
               args:
                 name: default
             - name: Bulkhead
@@ -90,7 +98,14 @@ spring:
           filters:
             - RewritePath=/api/restaurants/(?<segment>.*), /${segment}
             - name: AuthPreFilter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: ${RESTAURANT_RATE_LIMIT:30}
+                redis-rate-limiter.burstCapacity: ${RESTAURANT_BURST_CAPACITY:60}
             - name: Retry
+              args:
+                name: default
+            - name: TimeLimiter
               args:
                 name: default
             - name: Bulkhead
@@ -111,12 +126,19 @@ spring:
           filters:
             - RewritePath=/api/orders/(?<segment>.*), /${segment}
             - name: AuthPreFilter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: ${ORDER_RATE_LIMIT:15}
+                redis-rate-limiter.burstCapacity: ${ORDER_BURST_CAPACITY:30}
             - name: Retry
+              args:
+                name: orderStrict
+            - name: TimeLimiter
               args:
                 name: orderStrict
             - name: Bulkhead
               args:
-                name: default
+                name: orderStrict
             - name: CircuitBreaker
               args:
                 name: orderStrict
@@ -132,7 +154,14 @@ spring:
           filters:
             - RewritePath=/api/notifications/(?<segment>.*), /${segment}
             - name: AuthPreFilter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: ${NOTIFICATION_RATE_LIMIT:25}
+                redis-rate-limiter.burstCapacity: ${NOTIFICATION_BURST_CAPACITY:50}
             - name: Retry
+              args:
+                name: default
+            - name: TimeLimiter
               args:
                 name: default
             - name: Bulkhead
@@ -156,9 +185,12 @@ spring:
             - name: Retry
               args:
                 name: default
+            - name: TimeLimiter
+              args:
+                name: emailLenient
             - name: Bulkhead
               args:
-                name: default
+                name: emailLenient
             - name: CircuitBreaker
               args:
                 name: emailLenient
