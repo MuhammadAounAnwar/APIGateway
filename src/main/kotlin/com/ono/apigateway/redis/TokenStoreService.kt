@@ -4,11 +4,14 @@ import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.stereotype.Component
 import reactor.core.publisher.Mono
 import java.time.Duration
+import org.slf4j.LoggerFactory
 
 @Component
 class TokenStoreService(
     private val redisTemplate: ReactiveRedisTemplate<String, String>
 ) {
+
+    private val log = LoggerFactory.getLogger(TokenStoreService::class.java)
 
     companion object {
         private const val BLACKLIST_VALUE = "1"
@@ -32,7 +35,9 @@ class TokenStoreService(
                 userId,
                 Duration.ofSeconds(ttlSeconds)
             )
-            .onErrorResume { Mono.just(false) } // fail-open
+            .doOnError { ex ->
+                log.error("Redis JWT cache failure for jti={}", jti, ex)
+            }
     }
 
     /**
@@ -43,7 +48,9 @@ class TokenStoreService(
         return redisTemplate
             .opsForValue()
             .get(RedisKeys.jwtCacheByJti(jti))
-            .onErrorResume { Mono.empty() } // fail-open
+            .doOnError { ex ->
+                log.error("Redis JWT getUserId failure for jti={}", jti, ex)
+            }
     }
 
     /**
@@ -53,7 +60,9 @@ class TokenStoreService(
         return redisTemplate
             .delete(RedisKeys.jwtCacheByJti(jti))
             .map { it > 0 }
-            .onErrorReturn(false)
+            .doOnError { ex ->
+                log.error("Redis JWT evictCache failure for jti={}", jti, ex)
+            }
     }
 
     /**
@@ -64,7 +73,9 @@ class TokenStoreService(
             .getExpire(RedisKeys.jwtCacheByJti(jti))
             .filter { !it.isNegative && !it.isZero }
             .defaultIfEmpty(Duration.ZERO)
-            .onErrorReturn(Duration.ZERO)
+            .doOnError { ex ->
+                log.error("Redis JWT getCacheTtl failure for jti={}", jti, ex)
+            }
     }
 
     // ============================================================
@@ -109,7 +120,10 @@ class TokenStoreService(
     fun isBlacklisted(jti: String): Mono<Boolean> {
         return redisTemplate
             .hasKey(RedisKeys.jwtBlacklist(jti))
-            .onErrorReturn(true) // fail-safe (security first)
+            .doOnError { ex ->
+                log.error("Redis blacklist check failure for jti={}", jti, ex)
+            }
+            .onErrorReturn(true) // security fail-safe (explicit + logged)
     }
 
     /**
@@ -119,7 +133,9 @@ class TokenStoreService(
         return redisTemplate
             .delete(RedisKeys.jwtBlacklist(jti))
             .map { it > 0 }
-            .onErrorReturn(false)
+            .doOnError { ex ->
+                log.error("Redis evictBlacklist failure for jti={}", jti, ex)
+            }
     }
 
     /**
@@ -130,6 +146,8 @@ class TokenStoreService(
             .getExpire(RedisKeys.jwtBlacklist(jti))
             .filter { !it.isNegative && !it.isZero }
             .defaultIfEmpty(Duration.ZERO)
-            .onErrorReturn(Duration.ZERO)
+            .doOnError { ex ->
+                log.error("Redis getBlacklistTtl failure for jti={}", jti, ex)
+            }
     }
 }

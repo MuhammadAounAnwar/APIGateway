@@ -80,6 +80,7 @@ dependencies {
     implementation("org.springframework.cloud:spring-cloud-starter-circuitbreaker-reactor-resilience4j")
     implementation("io.github.resilience4j:resilience4j-micrometer")
     implementation("io.github.resilience4j:resilience4j-bulkhead") // Added for Bulkhead support
+    implementation("io.github.resilience4j:resilience4j-spring-boot3") // Added for Spring Boot 3 integration
 
     // -------------------------------------------------------------------------
     // 7. Logging Library
@@ -96,13 +97,6 @@ dependencies {
     // -------------------------------------------------------------------------
     implementation("io.micrometer:micrometer-tracing-bridge-otel")
     implementation("io.opentelemetry:opentelemetry-exporter-otlp")
-
-    // -------------------------------------------------------------------------
-    // 10. Micrometer Library
-    // -------------------------------------------------------------------------
-    implementation("io.github.resilience4j:resilience4j-micrometer")
-    implementation("org.springframework.boot:spring-boot-starter-actuator")
-    implementation("io.micrometer:micrometer-registry-prometheus")
 
     // ESSENTIAL for testing reactive (WebFlux/Gateway) components
     testImplementation("io.projectreactor:reactor-test")

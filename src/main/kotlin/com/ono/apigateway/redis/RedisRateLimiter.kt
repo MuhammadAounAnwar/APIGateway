@@ -1,5 +1,6 @@
 package com.ono.apigateway.redis
 
+import org.slf4j.LoggerFactory
 import org.springframework.data.redis.core.ReactiveRedisTemplate
 import org.springframework.stereotype.Component
 import reactor.core.publisher.Mono
@@ -9,6 +10,8 @@ import java.time.Duration
 class RedisRateLimiter(
     private val redisTemplate: ReactiveRedisTemplate<String, String>
 ) {
+
+    private val log = LoggerFactory.getLogger(RedisRateLimiter::class.java)
 
     /**
      * Fixed-window rate limiting
@@ -21,7 +24,6 @@ class RedisRateLimiter(
             .increment(key)
             .flatMap { count ->
                 if (count == 1L) {
-                    // Set expiration only when key is first created
                     redisTemplate
                         .expire(key, Duration.ofSeconds(windowSeconds))
                         .thenReturn(count <= limit)
@@ -29,9 +31,8 @@ class RedisRateLimiter(
                     Mono.just(count <= limit)
                 }
             }
-            .onErrorResume {
-                // Fail-open strategy (do not block traffic if Redis fails)
-                Mono.just(true)
+            .doOnError { ex ->
+                log.error("Redis rate limiter failure for key={}", key, ex)
             }
     }
 
@@ -47,6 +48,9 @@ class RedisRateLimiter(
                 (limit - used).coerceAtLeast(0L)
             }
             .defaultIfEmpty(limit.toLong())
+            .doOnError { ex ->
+                log.error("Redis remainingQuota failure for key={}", key, ex)
+            }
     }
 
     /**
@@ -56,6 +60,9 @@ class RedisRateLimiter(
         return redisTemplate
             .delete(key)
             .map { it > 0 }
+            .doOnError { ex ->
+                log.error("Redis reset failure for key={}", key, ex)
+            }
     }
 
     /**
@@ -65,6 +72,8 @@ class RedisRateLimiter(
         return redisTemplate
             .getExpire(key)
             .filter { it > Duration.ofSeconds(0) }
-            .map { it }
+            .doOnError { ex ->
+                log.error("Redis TTL lookup failure for key={}", key, ex)
+            }
     }
 }

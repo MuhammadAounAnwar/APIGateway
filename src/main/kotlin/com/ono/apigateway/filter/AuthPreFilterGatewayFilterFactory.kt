@@ -5,14 +5,13 @@ import com.ono.apigateway.redis.RedisKeys
 import com.ono.apigateway.redis.RedisRateLimiter
 import com.ono.apigateway.redis.TokenStoreService
 import io.micrometer.tracing.Tracer
-import io.micrometer.tracing.Span
 import org.slf4j.LoggerFactory
 import org.springframework.cloud.gateway.filter.GatewayFilter
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory
 import org.springframework.http.HttpStatus
-import org.springframework.http.MediaType
 import org.springframework.security.core.Authentication
 import org.springframework.security.oauth2.jwt.Jwt
+import org.springframework.web.server.ResponseStatusException
 import org.springframework.web.server.ServerWebExchange
 import reactor.core.publisher.Mono
 import java.time.Duration
@@ -57,7 +56,9 @@ class AuthPreFilterGatewayFilterFactory(
                             span.tag("rate.limit.allowed", allowed.toString())
                         }
 
-                        if (!allowed) return@flatMap reject(exchange, HttpStatus.TOO_MANY_REQUESTS)
+                        if (!allowed) return@flatMap Mono.error(
+                            ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Rate limit exceeded")
+                        )
 
                         addRateLimitHeaders(exchange, key, 50)
                             .then(chain.filter(exchange))
@@ -66,18 +67,24 @@ class AuthPreFilterGatewayFilterFactory(
 
             // ---------------- SECURED ROUTES ----------------
             exchange.getPrincipal<Authentication>()
-                .switchIfEmpty(reject(exchange, HttpStatus.UNAUTHORIZED).then(Mono.empty()))
+                .switchIfEmpty(Mono.error(ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized")))
                 .cast(Authentication::class.java)
                 .flatMap { authentication ->
 
                     val jwt = authentication.principal as? Jwt
-                        ?: return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
+                        ?: return@flatMap Mono.error(
+                            ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized")
+                        )
 
                     val userId = jwt.subject
-                        ?: return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
+                        ?: return@flatMap Mono.error(
+                            ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized")
+                        )
 
                     val jti = jwt.id
-                        ?: return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
+                        ?: return@flatMap Mono.error(
+                            ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized")
+                        )
 
                     val roles = authentication.authorities.joinToString(",") { it.authority }
 
@@ -98,7 +105,9 @@ class AuthPreFilterGatewayFilterFactory(
                                 span.tag("auth.user.id", userId)
                             }
 
-                            if (!allowed) return@flatMap reject(exchange, HttpStatus.TOO_MANY_REQUESTS)
+                            if (!allowed) return@flatMap Mono.error(
+                                ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Rate limit exceeded")
+                            )
 
                             // Blacklist check (fail-safe)
                             tokenStoreService.isBlacklisted(jti)
@@ -106,7 +115,9 @@ class AuthPreFilterGatewayFilterFactory(
                                     if (blacklisted) {
                                         tracer.currentSpan()?.event("token.blacklisted")
                                         tracer.currentSpan()?.tag("auth.user.id", userId)
-                                        return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
+                                        return@flatMap Mono.error(
+                                            ResponseStatusException(HttpStatus.UNAUTHORIZED, "Token blacklisted")
+                                        )
                                     }
 
                                     // Cache JTI until token expiration (fail-open)
@@ -167,39 +178,5 @@ class AuthPreFilterGatewayFilterFactory(
                 exchange.response.headers.set(RATE_LIMIT_RESET, resetEpoch.toString())
             }
             .then()
-    }
-
-    private fun reject(exchange: ServerWebExchange, status: HttpStatus): Mono<Void> {
-
-        val span = tracer.currentSpan()
-        span?.event("gateway.rejection")
-        span?.tag("rejection.status", status.value().toString())
-        span?.tag("rejection.path", exchange.request.uri.path)
-
-        log.warn(
-            "Gateway rejection -> status: {}, method: {}, path: {}, ip: {}",
-            status.value(),
-            exchange.request.method,
-            exchange.request.uri.path,
-            exchange.request.remoteAddress?.address?.hostAddress ?: "unknown"
-        )
-
-        exchange.response.statusCode = status
-        exchange.response.headers.contentType = MediaType.APPLICATION_JSON
-
-        val traceId = tracer.currentSpan()?.context()?.traceId() ?: "UNKNOWN"
-
-        val body = """
-            {
-              "timestamp": "${Instant.now()}",
-              "status": ${status.value()},
-              "error": "${status.reasonPhrase}",
-              "path": "${exchange.request.uri.path}",
-              "traceId": "$traceId"
-            }
-        """.trimIndent()
-
-        val buffer = exchange.response.bufferFactory().wrap(body.toByteArray())
-        return exchange.response.writeWith(Mono.just(buffer))
     }
 }
