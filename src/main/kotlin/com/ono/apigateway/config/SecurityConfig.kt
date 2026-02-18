@@ -35,6 +35,8 @@ class SecurityConfig {
                 exchanges
                     // Public endpoints (Authentication Service)
                     .pathMatchers("/api/auth/**").permitAll()
+                    .pathMatchers("/actuator/health").permitAll()
+                    .pathMatchers("/actuator/**").hasRole("ADMIN")
 
                     // Allow preflight requests
                     .pathMatchers(HttpMethod.OPTIONS).permitAll()
