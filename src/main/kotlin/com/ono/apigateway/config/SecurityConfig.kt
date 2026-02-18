@@ -1,4 +1,4 @@
-package com.ono.apigateway
+package com.ono.apigateway.config
 
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -6,6 +6,7 @@ import org.springframework.http.HttpMethod
 import org.springframework.security.config.annotation.method.configuration.EnableReactiveMethodSecurity
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity
 import org.springframework.security.config.web.server.ServerHttpSecurity
+import org.springframework.security.core.authority.SimpleGrantedAuthority
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter
 import org.springframework.security.oauth2.server.resource.authentication.ReactiveJwtAuthenticationConverterAdapter
 import org.springframework.security.web.server.SecurityWebFilterChain
@@ -62,7 +63,7 @@ class SecurityConfig {
             val roles = jwt.getClaimAsStringList("roles") ?: emptyList()
 
             roles.map { role ->
-                org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_$role")
+                SimpleGrantedAuthority("ROLE_$role")
             }
         }
 

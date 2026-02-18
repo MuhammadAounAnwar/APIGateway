@@ -1,4 +1,4 @@
-package com.ono.apigateway
+package com.ono.apigateway.security
 
 import org.springframework.stereotype.Component
 

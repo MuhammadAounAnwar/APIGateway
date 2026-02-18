@@ -1,4 +1,4 @@
-package com.ono.apigateway.redis
+package com.ono.apigateway.config
 
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration

@@ -1,11 +1,12 @@
-package com.ono.apigateway
+package com.ono.apigateway.resillience
 
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.http.server.reactive.ServerHttpRequest
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
-import org.springframework.http.server.reactive.ServerHttpRequest
 import java.time.Instant
 
 @RestController
@@ -43,7 +44,7 @@ class GatewayFallbackController {
     @GetMapping("/{service}")
     fun serviceFallback(
         request: ServerHttpRequest,
-        @org.springframework.web.bind.annotation.PathVariable service: String
+        @PathVariable service: String
     ): ResponseEntity<Map<String, Any>> {
 
         val normalizedService = service.uppercase()

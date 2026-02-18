@@ -1,12 +1,14 @@
-package com.ono.apigateway
+package com.ono.apigateway.filter
 
-import com.ono.apigateway.redis.TokenStoreService
+import com.ono.apigateway.security.RouteValidator
 import com.ono.apigateway.redis.RedisKeys
 import com.ono.apigateway.redis.RedisRateLimiter
+import com.ono.apigateway.redis.TokenStoreService
 import org.slf4j.LoggerFactory
 import org.springframework.cloud.gateway.filter.GatewayFilter
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory
 import org.springframework.http.HttpStatus
+import org.springframework.http.MediaType
 import org.springframework.security.core.Authentication
 import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.server.ServerWebExchange
@@ -161,7 +163,7 @@ class AuthPreFilterGatewayFilterFactory(
 
         exchange.response.statusCode = status
         exchange.response.headers.add(CORRELATION_ID_HEADER, correlationId)
-        exchange.response.headers.contentType = org.springframework.http.MediaType.APPLICATION_JSON
+        exchange.response.headers.contentType = MediaType.APPLICATION_JSON
 
         val body = """
             {
