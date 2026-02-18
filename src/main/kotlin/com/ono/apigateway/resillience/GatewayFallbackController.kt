@@ -1,5 +1,6 @@
 package com.ono.apigateway.resillience
 
+import io.micrometer.tracing.Tracer
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.http.server.reactive.ServerHttpRequest
@@ -11,11 +12,9 @@ import java.time.Instant
 
 @RestController
 @RequestMapping("/fallback")
-class GatewayFallbackController {
-
-    companion object {
-        private const val CORRELATION_ID_HEADER = "X-Correlation-Id"
-    }
+class GatewayFallbackController(
+    private val tracer: Tracer
+) {
 
     private fun buildFallbackResponse(
         request: ServerHttpRequest,
@@ -23,8 +22,7 @@ class GatewayFallbackController {
         message: String
     ): ResponseEntity<Map<String, Any>> {
 
-        val correlationId =
-            request.headers.getFirst(CORRELATION_ID_HEADER) ?: "UNKNOWN"
+        val traceId = tracer.currentSpan()?.context()?.traceId() ?: "UNKNOWN"
 
         val body = mapOf(
             "timestamp" to Instant.now().toString(),
@@ -33,7 +31,7 @@ class GatewayFallbackController {
             "message" to message,
             "service" to serviceName,
             "path" to request.uri.path,
-            "correlationId" to correlationId
+            "traceId" to traceId
         )
 
         return ResponseEntity

@@ -4,6 +4,8 @@ import com.ono.apigateway.security.RouteValidator
 import com.ono.apigateway.redis.RedisKeys
 import com.ono.apigateway.redis.RedisRateLimiter
 import com.ono.apigateway.redis.TokenStoreService
+import io.micrometer.tracing.Tracer
+import io.micrometer.tracing.Span
 import org.slf4j.LoggerFactory
 import org.springframework.cloud.gateway.filter.GatewayFilter
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory
@@ -19,13 +21,13 @@ import java.time.Instant
 class AuthPreFilterGatewayFilterFactory(
     private val routeValidator: RouteValidator,
     private val rateLimiter: RedisRateLimiter,
-    private val tokenStoreService: TokenStoreService
+    private val tokenStoreService: TokenStoreService,
+    private val tracer: Tracer
 ) : AbstractGatewayFilterFactory<AuthPreFilterGatewayFilterFactory.Config>(Config::class.java) {
 
     private val log = LoggerFactory.getLogger(javaClass)
 
     companion object {
-        private const val CORRELATION_ID_HEADER = "X-Correlation-Id"
         private const val USER_ID_HEADER = "X-User-Id"
         private const val USER_ROLES_HEADER = "X-User-Roles"
         private const val RATE_LIMIT_REMAINING = "X-RateLimit-Remaining"
@@ -41,7 +43,6 @@ class AuthPreFilterGatewayFilterFactory(
             val request = exchange.request
             val path = request.uri.path
             val ip = request.remoteAddress?.address?.hostAddress ?: "unknown"
-            val correlationId = request.headers.getFirst(CORRELATION_ID_HEADER) ?: "UNKNOWN"
 
             // ---------------- PUBLIC ROUTES ----------------
             if (!routeValidator.isSecured(path)) {
@@ -49,6 +50,13 @@ class AuthPreFilterGatewayFilterFactory(
                 return@GatewayFilter rateLimiter
                     .isAllowed(key, 50, 60)
                     .flatMap { allowed ->
+
+                        tracer.currentSpan()?.let { span ->
+                            span.tag("rate.limit.type", "ip")
+                            span.tag("rate.limit.key", key)
+                            span.tag("rate.limit.allowed", allowed.toString())
+                        }
+
                         if (!allowed) return@flatMap reject(exchange, HttpStatus.TOO_MANY_REQUESTS)
 
                         addRateLimitHeaders(exchange, key, 50)
@@ -73,17 +81,33 @@ class AuthPreFilterGatewayFilterFactory(
 
                     val roles = authentication.authorities.joinToString(",") { it.authority }
 
+                    tracer.currentSpan()?.event("authentication.success")
+                    tracer.currentSpan()?.tag("auth.user.id", userId)
+                    tracer.currentSpan()?.tag("auth.roles", roles)
+
                     val rateKey = RedisKeys.rateByUser(userId)
 
                     // Per-user rate limiting
                     rateLimiter.isAllowed(rateKey, 200, 60)
                         .flatMap { allowed ->
+
+                            tracer.currentSpan()?.let { span ->
+                                span.tag("rate.limit.type", "user")
+                                span.tag("rate.limit.key", rateKey)
+                                span.tag("rate.limit.allowed", allowed.toString())
+                                span.tag("auth.user.id", userId)
+                            }
+
                             if (!allowed) return@flatMap reject(exchange, HttpStatus.TOO_MANY_REQUESTS)
 
                             // Blacklist check (fail-safe)
                             tokenStoreService.isBlacklisted(jti)
                                 .flatMap { blacklisted ->
-                                    if (blacklisted) return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
+                                    if (blacklisted) {
+                                        tracer.currentSpan()?.event("token.blacklisted")
+                                        tracer.currentSpan()?.tag("auth.user.id", userId)
+                                        return@flatMap reject(exchange, HttpStatus.UNAUTHORIZED)
+                                    }
 
                                     // Cache JTI until token expiration (fail-open)
                                     val ttlSeconds = jwt.expiresAt?.let {
@@ -96,7 +120,7 @@ class AuthPreFilterGatewayFilterFactory(
 
                                     cacheMono.then(
                                         addRateLimitHeaders(exchange, rateKey, 200)
-                                            .then(chain.filter(mutate(exchange, userId, roles, correlationId)))
+                                            .then(chain.filter(mutate(exchange, userId, roles)))
                                     )
                                 }
                         }
@@ -109,15 +133,13 @@ class AuthPreFilterGatewayFilterFactory(
     private fun mutate(
         exchange: ServerWebExchange,
         userId: String,
-        roles: String,
-        correlationId: String
+        roles: String
     ): ServerWebExchange {
         return exchange.mutate()
             .request(
                 exchange.request.mutate()
                     .header(USER_ID_HEADER, userId)
                     .header(USER_ROLES_HEADER, roles)
-                    .header(CORRELATION_ID_HEADER, correlationId)
                     .build()
             )
             .build()
@@ -149,21 +171,23 @@ class AuthPreFilterGatewayFilterFactory(
 
     private fun reject(exchange: ServerWebExchange, status: HttpStatus): Mono<Void> {
 
-        val correlationId = exchange.request.headers
-            .getFirst(CORRELATION_ID_HEADER) ?: "UNKNOWN"
+        val span = tracer.currentSpan()
+        span?.event("gateway.rejection")
+        span?.tag("rejection.status", status.value().toString())
+        span?.tag("rejection.path", exchange.request.uri.path)
 
         log.warn(
-            "Gateway rejection -> status: {}, method: {}, path: {}, ip: {}, correlationId: {}",
+            "Gateway rejection -> status: {}, method: {}, path: {}, ip: {}",
             status.value(),
             exchange.request.method,
             exchange.request.uri.path,
-            exchange.request.remoteAddress?.address?.hostAddress ?: "unknown",
-            correlationId
+            exchange.request.remoteAddress?.address?.hostAddress ?: "unknown"
         )
 
         exchange.response.statusCode = status
-        exchange.response.headers.add(CORRELATION_ID_HEADER, correlationId)
         exchange.response.headers.contentType = MediaType.APPLICATION_JSON
+
+        val traceId = tracer.currentSpan()?.context()?.traceId() ?: "UNKNOWN"
 
         val body = """
             {
@@ -171,7 +195,7 @@ class AuthPreFilterGatewayFilterFactory(
               "status": ${status.value()},
               "error": "${status.reasonPhrase}",
               "path": "${exchange.request.uri.path}",
-              "correlationId": "$correlationId"
+              "traceId": "$traceId"
             }
         """.trimIndent()
 

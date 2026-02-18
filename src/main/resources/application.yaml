@@ -201,6 +201,9 @@ logging:
     org.springframework.cloud.gateway: INFO
     reactor.netty.http.client: INFO
     io.github.resilience4j: INFO
+    io.opentelemetry: DEBUG
+  pattern:
+    level: "%5p [${spring.application.name:},traceId=%X{traceId:-},spanId=%X{spanId:-}]"
 
 management:
   endpoints:
@@ -209,9 +212,22 @@ management:
         include: health,info,metrics,prometheus
       base-path: /actuator
 
+  observations:
+    key-values:
+      service.name: api-gateway
+      service.version: 1.0.0
+      deployment.environment: ${spring.profiles.active}
+
   metrics:
     tags:
       application: api-gateway
+    enable:
+      reactor.netty.http.client: true
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      percentiles:
+        http.server.requests: 0.5, 0.9, 0.95, 0.99
 
   endpoint:
     health:
@@ -220,6 +236,9 @@ management:
   tracing:
     sampling:
       probability: 1.0
+    propagation:
+      type: W3C
+    enabled: true
 
   otlp:
     tracing:
