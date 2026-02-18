@@ -2,16 +2,21 @@ package com.ono.apigateway.config
 
 import io.github.resilience4j.bulkhead.BulkheadConfig
 import io.github.resilience4j.bulkhead.ThreadPoolBulkheadConfig
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
 import io.github.resilience4j.common.bulkhead.configuration.BulkheadConfigCustomizer
 import io.github.resilience4j.common.circuitbreaker.configuration.CircuitBreakerConfigCustomizer
 import io.github.resilience4j.common.retry.configuration.RetryConfigCustomizer
 import io.github.resilience4j.common.timelimiter.configuration.TimeLimiterConfigCustomizer
 import io.github.resilience4j.core.IntervalFunction
+import io.micrometer.core.instrument.MeterRegistry
+import org.springframework.boot.ApplicationRunner
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.context.annotation.Profile
 import java.time.Duration
 
 @Configuration
+@Profile("default")
 class Resilience4jConfig {
 
     // ============================================================
@@ -103,5 +108,42 @@ class Resilience4jConfig {
                     .cancelRunningFuture(true)
                     .build()
             }
+    }
+
+    @Bean
+    fun circuitBreakerEventLogger(
+        registry: CircuitBreakerRegistry,
+        meterRegistry: MeterRegistry
+    ): ApplicationRunner {
+        return ApplicationRunner {
+            registry.allCircuitBreakers.forEach { cb ->
+
+                cb.eventPublisher
+                    .onStateTransition { event ->
+                        meterRegistry.counter(
+                            "gateway.circuit.state.transition",
+                            "circuit", cb.name,
+                            "from", event.stateTransition.fromState.name,
+                            "to", event.stateTransition.toState.name
+                        ).increment()
+                    }
+
+                cb.eventPublisher
+                    .onError {
+                        meterRegistry.counter(
+                            "gateway.circuit.errors",
+                            "circuit", cb.name
+                        ).increment()
+                    }
+
+                cb.eventPublisher
+                    .onCallNotPermitted {
+                        meterRegistry.counter(
+                            "gateway.circuit.blocked",
+                            "circuit", cb.name
+                        ).increment()
+                    }
+            }
+        }
     }
 }

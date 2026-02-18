@@ -1,0 +1,81 @@
+############################################
+# PROD PROFILE CONFIGURATION
+############################################
+
+server:
+  port: ${GATEWAY_PORT:8762}
+
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_ZONE}
+
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT}
+      password: ${REDIS_PASSWORD}
+      timeout: 2000ms
+
+  cloud:
+    gateway:
+      httpclient:
+        connect-timeout: 3000
+        response-timeout: 5s
+
+############################################
+# RESILIENCE (STRICT FOR PROD)
+############################################
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        slidingWindowSize: 100
+        minimumNumberOfCalls: 30
+        failureRateThreshold: 50
+        slowCallRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 10
+
+    instances:
+      default:
+        baseConfig: default
+
+      orderStrict:
+        baseConfig: default
+        failureRateThreshold: 30
+        slowCallRateThreshold: 30
+        waitDurationInOpenState: 45s
+        permittedNumberOfCallsInHalfOpenState: 5
+
+      emailLenient:
+        baseConfig: default
+        failureRateThreshold: 70
+        waitDurationInOpenState: 15s
+
+  retry:
+    instances:
+      default:
+        maxAttempts: 2
+        waitDuration: 300ms
+
+      orderStrict:
+        maxAttempts: 1
+        waitDuration: 200ms
+
+  bulkhead:
+    instances:
+      default:
+        maxConcurrentCalls: 30
+        maxWaitDuration: 0
+
+############################################
+# OBSERVABILITY (REDUCED FOR PROD)
+############################################
+
+management:
+  tracing:
+    sampling:
+      probability: 0.2   # reduce overhead in prod
