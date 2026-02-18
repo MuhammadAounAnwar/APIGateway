@@ -72,12 +72,10 @@ spring:
                 redis-rate-limiter.burstCapacity: 20
             - name: Retry
               args:
-                retries: 2
-                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE,GATEWAY_TIMEOUT
-                methods: POST
+                name: default
             - name: CircuitBreaker
               args:
-                name: authServiceCB
+                name: default
                 fallbackUri: forward:/fallback/auth-service
 
         # ------------------------------------------------------------------
@@ -92,15 +90,13 @@ spring:
             - name: AuthPreFilter
             - name: Retry
               args:
-                retries: 2
-                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE,GATEWAY_TIMEOUT
-                methods: GET,POST,PUT,DELETE
+                name: default
             - name: Bulkhead
               args:
-                name: userServiceBH
+                name: default
             - name: CircuitBreaker
               args:
-                name: userServiceCB
+                name: default
                 fallbackUri: forward:/fallback/user-service
 
         # ------------------------------------------------------------------
@@ -115,15 +111,13 @@ spring:
             - name: AuthPreFilter
             - name: Retry
               args:
-                retries: 2
-                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE,GATEWAY_TIMEOUT
-                methods: GET,POST,PUT,DELETE
+                name: default
             - name: Bulkhead
               args:
-                name: restaurantServiceBH
+                name: default
             - name: CircuitBreaker
               args:
-                name: restaurantServiceCB
+                name: default
                 fallbackUri: forward:/fallback/restaurant-service
 
         # ------------------------------------------------------------------
@@ -138,15 +132,13 @@ spring:
             - name: AuthPreFilter
             - name: Retry
               args:
-                retries: 2
-                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE,GATEWAY_TIMEOUT
-                methods: GET,POST,PUT,DELETE
+                name: orderStrict
             - name: Bulkhead
               args:
-                name: orderServiceBH
+                name: default
             - name: CircuitBreaker
               args:
-                name: orderServiceCB
+                name: orderStrict
                 fallbackUri: forward:/fallback/order-service
 
         # ------------------------------------------------------------------
@@ -161,15 +153,13 @@ spring:
             - name: AuthPreFilter
             - name: Retry
               args:
-                retries: 2
-                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE,GATEWAY_TIMEOUT
-                methods: GET,POST,PUT,DELETE
+                name: default
             - name: Bulkhead
               args:
-                name: notificationServiceBH
+                name: default
             - name: CircuitBreaker
               args:
-                name: notificationServiceCB
+                name: default
                 fallbackUri: forward:/fallback/notification-service
 
         # ------------------------------------------------------------------
@@ -184,107 +174,14 @@ spring:
             - name: AuthPreFilter
             - name: Retry
               args:
-                retries: 2
-                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE,GATEWAY_TIMEOUT
-                methods: GET,POST,PUT,DELETE
+                name: default
             - name: Bulkhead
               args:
-                name: emailServiceBH
+                name: default
             - name: CircuitBreaker
               args:
-                name: emailServiceCB
+                name: emailLenient
                 fallbackUri: forward:/fallback/email-service
-
-resilience4j:
-  circuitbreaker:
-    instances:
-      authServiceCB:
-        slidingWindowSize: 10
-        minimumNumberOfCalls: 5
-        failureRateThreshold: 50
-        waitDurationInOpenState: 30s
-        permittedNumberOfCallsInHalfOpenState: 3
-
-      userServiceCB:
-        slidingWindowSize: 10
-        minimumNumberOfCalls: 5
-        failureRateThreshold: 50
-        waitDurationInOpenState: 30s
-        permittedNumberOfCallsInHalfOpenState: 3
-
-      restaurantServiceCB:
-        slidingWindowSize: 10
-        minimumNumberOfCalls: 5
-        failureRateThreshold: 50
-        waitDurationInOpenState: 30s
-        permittedNumberOfCallsInHalfOpenState: 3
-
-      orderServiceCB:
-        slidingWindowSize: 10
-        minimumNumberOfCalls: 5
-        failureRateThreshold: 50
-        waitDurationInOpenState: 30s
-        permittedNumberOfCallsInHalfOpenState: 3
-
-      notificationServiceCB:
-        slidingWindowSize: 10
-        minimumNumberOfCalls: 5
-        failureRateThreshold: 50
-        waitDurationInOpenState: 30s
-        permittedNumberOfCallsInHalfOpenState: 3
-
-      emailServiceCB:
-        slidingWindowSize: 10
-        minimumNumberOfCalls: 5
-        failureRateThreshold: 50
-        waitDurationInOpenState: 30s
-        permittedNumberOfCallsInHalfOpenState: 3
-
-  bulkhead:
-    instances:
-      authServiceBH:
-        maxConcurrentCalls: 100
-        maxWaitDuration: 0
-
-      userServiceBH:
-        maxConcurrentCalls: 80
-        maxWaitDuration: 0
-
-      restaurantServiceBH:
-        maxConcurrentCalls: 60
-        maxWaitDuration: 0
-
-      orderServiceBH:
-        maxConcurrentCalls: 50
-        maxWaitDuration: 0
-
-      notificationServiceBH:
-        maxConcurrentCalls: 30
-        maxWaitDuration: 0
-
-      emailServiceBH:
-        maxConcurrentCalls: 10
-        maxWaitDuration: 0
-
-  timelimiter:
-    instances:
-      authServiceCB:
-        timeoutDuration: 3s
-
-      userServiceCB:
-        timeoutDuration: 3s
-
-      restaurantServiceCB:
-        timeoutDuration: 3s
-
-      orderServiceCB:
-        timeoutDuration: 3s
-
-      notificationServiceCB:
-        timeoutDuration: 3s
-
-      emailServiceCB:
-        timeoutDuration: 3s
 
 logging:
   level:

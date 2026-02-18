@@ -78,6 +78,8 @@ dependencies {
     // 6. Resilience4j for Circuit Breaker
     // -------------------------------------------------------------------------
     implementation("org.springframework.cloud:spring-cloud-starter-circuitbreaker-reactor-resilience4j")
+    implementation("io.github.resilience4j:resilience4j-micrometer")
+    implementation("io.github.resilience4j:resilience4j-bulkhead") // Added for Bulkhead support
 
     // -------------------------------------------------------------------------
     // 7. Logging Library
