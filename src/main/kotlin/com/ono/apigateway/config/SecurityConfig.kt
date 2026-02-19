@@ -65,7 +65,11 @@ class SecurityConfig {
             val roles = jwt.getClaimAsStringList("roles") ?: emptyList()
 
             roles.map { role ->
-                SimpleGrantedAuthority("ROLE_$role")
+                if (role.startsWith("ROLE_")) {
+                    SimpleGrantedAuthority(role)
+                } else {
+                    SimpleGrantedAuthority("ROLE_$role")
+                }
             }
         }
 

@@ -11,9 +11,10 @@ spring:
     import: optional:file:.env  # loads environment variables from .env
 
   security:
-    jwt:
-      secret: ${JWT_SECRET}
-      expiration: ${JWT_EXPIRATION_MS:3600000}
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8081
 
   cloud:
     gateway:

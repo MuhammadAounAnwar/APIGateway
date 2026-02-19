@@ -1,17 +1,14 @@
 package com.ono.apigateway.filter
 
-import com.ono.apigateway.security.RouteValidator
 import com.ono.apigateway.redis.RedisKeys
 import com.ono.apigateway.redis.RedisRateLimiter
 import com.ono.apigateway.redis.TokenStoreService
+import com.ono.apigateway.security.RouteValidator
+import com.ono.apigateway.util.*
 import io.micrometer.tracing.Tracer
 import org.slf4j.LoggerFactory
 import org.springframework.cloud.gateway.filter.GatewayFilter
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory
-import org.springframework.http.HttpStatus
-import org.springframework.security.core.Authentication
-import org.springframework.security.oauth2.jwt.Jwt
-import org.springframework.web.server.ResponseStatusException
 import org.springframework.web.server.ServerWebExchange
 import reactor.core.publisher.Mono
 import java.time.Duration
@@ -50,15 +47,9 @@ class AuthPreFilterGatewayFilterFactory(
                     .isAllowed(key, 50, 60)
                     .flatMap { allowed ->
 
-                        tracer.currentSpan()?.let { span ->
-                            span.tag("rate.limit.type", "ip")
-                            span.tag("rate.limit.key", key)
-                            span.tag("rate.limit.allowed", allowed.toString())
-                        }
+                        tracer.tagRateLimit("ip", key, allowed)
 
-                        if (!allowed) return@flatMap Mono.error(
-                            ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Rate limit exceeded")
-                        )
+                        if (!allowed) return@flatMap tooManyRequests()
 
                         addRateLimitHeaders(exchange, key, 50)
                             .then(chain.filter(exchange))
@@ -66,61 +57,38 @@ class AuthPreFilterGatewayFilterFactory(
             }
 
             // ---------------- SECURED ROUTES ----------------
-            exchange.getPrincipal<Authentication>()
-                .switchIfEmpty(Mono.error(ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized")))
-                .cast(Authentication::class.java)
-                .flatMap { authentication ->
+            exchange.requireAuthContext()
+                .flatMap { authContext ->
 
-                    val jwt = authentication.principal as? Jwt
-                        ?: return@flatMap Mono.error(
-                            ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized")
-                        )
+                    val jwt = authContext.jwt
+                    val roles = authContext.roles
 
-                    val userId = jwt.subject
-                        ?: return@flatMap Mono.error(
-                            ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized")
-                        )
+                    val userId = jwt.subject ?: return@flatMap unauthorized()
+                    val jti = jwt.id ?: return@flatMap unauthorized()
 
-                    val jti = jwt.id
-                        ?: return@flatMap Mono.error(
-                            ResponseStatusException(HttpStatus.UNAUTHORIZED, "Unauthorized")
-                        )
-
-                    val roles = authentication.authorities.joinToString(",") { it.authority }
-
-                    tracer.currentSpan()?.event("authentication.success")
-                    tracer.currentSpan()?.tag("auth.user.id", userId)
-                    tracer.currentSpan()?.tag("auth.roles", roles)
+                    tracer.event("authentication.success")
+                    tracer.tag("auth.user.id", userId)
+                    tracer.tag("auth.roles", roles)
 
                     val rateKey = RedisKeys.rateByUser(userId)
 
-                    // Per-user rate limiting
                     rateLimiter.isAllowed(rateKey, 200, 60)
                         .flatMap { allowed ->
 
-                            tracer.currentSpan()?.let { span ->
-                                span.tag("rate.limit.type", "user")
-                                span.tag("rate.limit.key", rateKey)
-                                span.tag("rate.limit.allowed", allowed.toString())
-                                span.tag("auth.user.id", userId)
-                            }
+                            tracer.tagRateLimit("user", rateKey, allowed)
+                            tracer.tag("auth.user.id", userId)
 
-                            if (!allowed) return@flatMap Mono.error(
-                                ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Rate limit exceeded")
-                            )
+                            if (!allowed) return@flatMap tooManyRequests()
 
-                            // Blacklist check (fail-safe)
                             tokenStoreService.isBlacklisted(jti)
                                 .flatMap { blacklisted ->
+
                                     if (blacklisted) {
-                                        tracer.currentSpan()?.event("token.blacklisted")
-                                        tracer.currentSpan()?.tag("auth.user.id", userId)
-                                        return@flatMap Mono.error(
-                                            ResponseStatusException(HttpStatus.UNAUTHORIZED, "Token blacklisted")
-                                        )
+                                        tracer.event("token.blacklisted")
+                                        tracer.tag("auth.user.id", userId)
+                                        return@flatMap unauthorized("Token blacklisted")
                                     }
 
-                                    // Cache JTI until token expiration (fail-open)
                                     val ttlSeconds = jwt.expiresAt?.let {
                                         Duration.between(Instant.now(), it).seconds.coerceAtLeast(0)
                                     } ?: 0
