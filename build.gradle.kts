@@ -1,14 +1,11 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    // 1. **CRITICAL CHANGE:** Revert to stable Kotlin 1.9.x
     kotlin("jvm") version "1.9.24"
     kotlin("plugin.spring") version "1.9.24"
-
-    id("org.springframework.boot") version "3.2.5" // Keep this stable version
+    id("org.springframework.boot") version "3.2.5"
     id("io.spring.dependency-management") version "1.1.7"
 }
-
 
 group = "com.ono"
 version = "0.0.1-SNAPSHOT"
@@ -20,7 +17,6 @@ java {
     }
 }
 
-// Ensure this Spring Cloud version is compatible with the Spring Boot version above (3.3.1 -> 2023.0.4 is compatible)
 val springCloudVersion = "2023.0.4"
 
 dependencyManagement {
@@ -31,22 +27,15 @@ dependencyManagement {
 
 dependencies {
     // -------------------------------------------------------------------------
-    // 1. Core Reactive Gateway & Discovery (ESSENTIAL)
+    // 1. Core Reactive Gateway & Discovery
     // -------------------------------------------------------------------------
-    // Core Gateway functionality (WebFlux based)
     implementation("org.springframework.cloud:spring-cloud-starter-gateway")
-
-    // Service Discovery (for lb:// routing)
     implementation("org.springframework.cloud:spring-cloud-starter-netflix-eureka-client")
     implementation("org.springframework.cloud:spring-cloud-starter-loadbalancer")
-
-    // NOTE: 'spring-boot-starter-webflux' is generally included transitively by the Gateway starter.
-    // Explicitly keeping it is harmless but unnecessary for modern Spring versions.
 
     // -------------------------------------------------------------------------
     // 2. Security & Filter Chains (Centralized Auth)
     // -------------------------------------------------------------------------
-    // Reactive Security framework
     implementation("org.springframework.boot:spring-boot-starter-security")
     implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
 
@@ -65,53 +54,48 @@ dependencies {
     // -------------------------------------------------------------------------
     implementation("org.springframework.boot:spring-boot-starter-actuator")
     implementation("io.micrometer:micrometer-registry-prometheus")
-    implementation("io.micrometer:micrometer-tracing-bridge-brave")
 
     // -------------------------------------------------------------------------
-    // 5. Testing
-    // -------------------------------------------------------------------------
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
-    testImplementation("org.springframework.security:spring-security-test")
-    testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
-
-    // -------------------------------------------------------------------------
-    // 6. Resilience4j for Circuit Breaker
+    // 5. Resilience4j for Circuit Breaker (Spring Cloud starter manages versions)
     // -------------------------------------------------------------------------
     implementation("org.springframework.cloud:spring-cloud-starter-circuitbreaker-reactor-resilience4j")
     implementation("io.github.resilience4j:resilience4j-micrometer")
-    implementation("io.github.resilience4j:resilience4j-bulkhead") // Added for Bulkhead support
-    implementation("io.github.resilience4j:resilience4j-spring-boot3") // Added for Spring Boot 3 integration
 
     // -------------------------------------------------------------------------
-    // 7. Logging Library
+    // 6. Shared Observability Library
     // -------------------------------------------------------------------------
-    implementation("com.github.MuhammadAounAnwar:logginglibrary:1.0.4")
+    implementation("com.github.MuhammadAounAnwar:logginglibrary-spring-boot-starter:1.0.6")
+
+    // Logbook — HTTP request/response logging (logginglibrary uses compileOnly, must add explicitly)
+    implementation("org.zalando:logbook-spring-boot-starter:3.9.0")
 
     // -------------------------------------------------------------------------
-    // 8. Redis Library
+    // 7. Redis (Reactive — matches WebFlux stack)
     // -------------------------------------------------------------------------
     implementation("org.springframework.boot:spring-boot-starter-data-redis-reactive")
 
     // -------------------------------------------------------------------------
-    // 9. Tracing Library
+    // 8. Tracing (OpenTelemetry — single bridge, NOT brave)
     // -------------------------------------------------------------------------
     implementation("io.micrometer:micrometer-tracing-bridge-otel")
     implementation("io.opentelemetry:opentelemetry-exporter-otlp")
 
-    // ESSENTIAL for testing reactive (WebFlux/Gateway) components
+    // -------------------------------------------------------------------------
+    // 9. Testing
+    // -------------------------------------------------------------------------
+    testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.springframework.security:spring-security-test")
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation("io.projectreactor:reactor-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 /* -------------------------------------------------------------------------
- * Kotlin Compiler Configuration (SINGLE place)
+ * Kotlin Compiler Configuration
  * ------------------------------------------------------------------------- */
 tasks.withType<KotlinCompile>().configureEach {
     compilerOptions {
-        freeCompilerArgs.addAll(
-            "-Xjsr305=strict",
-            "-Xannotation-default-target=param-property"
-        )
+        freeCompilerArgs.addAll("-Xjsr305=strict")
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
     }
 }

@@ -1,7 +1,7 @@
 package com.ono.apigateway.filter
 
 import com.ono.apigateway.redis.RedisKeys
-import com.ono.apigateway.redis.RedisRateLimiter
+import com.ono.apigateway.redis.GatewayRateLimiter
 import com.ono.apigateway.redis.TokenStoreService
 import com.ono.apigateway.security.RouteValidator
 import com.ono.apigateway.util.*
@@ -9,14 +9,16 @@ import io.micrometer.tracing.Tracer
 import org.slf4j.LoggerFactory
 import org.springframework.cloud.gateway.filter.GatewayFilter
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory
+import org.springframework.stereotype.Component
 import org.springframework.web.server.ServerWebExchange
 import reactor.core.publisher.Mono
 import java.time.Duration
 import java.time.Instant
 
+@Component
 class AuthPreFilterGatewayFilterFactory(
     private val routeValidator: RouteValidator,
-    private val rateLimiter: RedisRateLimiter,
+    private val rateLimiter: GatewayRateLimiter,
     private val tokenStoreService: TokenStoreService,
     private val tracer: Tracer
 ) : AbstractGatewayFilterFactory<AuthPreFilterGatewayFilterFactory.Config>(Config::class.java) {
@@ -26,6 +28,7 @@ class AuthPreFilterGatewayFilterFactory(
     companion object {
         private const val USER_ID_HEADER = "X-User-Id"
         private const val USER_ROLES_HEADER = "X-User-Roles"
+        private const val TENANT_ID_HEADER = "X-Tenant-ID"
         private const val RATE_LIMIT_REMAINING = "X-RateLimit-Remaining"
         private const val RATE_LIMIT_LIMIT = "X-RateLimit-Limit"
         private const val RATE_LIMIT_RESET = "X-RateLimit-Reset"
@@ -97,9 +100,11 @@ class AuthPreFilterGatewayFilterFactory(
                                         tokenStoreService.cacheIfAbsent(jti, userId, ttlSeconds)
                                     } else Mono.empty()
 
+                                    val tenantId = jwt.getClaim<String>("tenantId") ?: "default"
+
                                     cacheMono.then(
                                         addRateLimitHeaders(exchange, rateKey, 200)
-                                            .then(chain.filter(mutate(exchange, userId, roles)))
+                                            .then(chain.filter(mutate(exchange, userId, roles, tenantId)))
                                     )
                                 }
                         }
@@ -112,13 +117,15 @@ class AuthPreFilterGatewayFilterFactory(
     private fun mutate(
         exchange: ServerWebExchange,
         userId: String,
-        roles: String
+        roles: String,
+        tenantId: String
     ): ServerWebExchange {
         return exchange.mutate()
             .request(
                 exchange.request.mutate()
                     .header(USER_ID_HEADER, userId)
                     .header(USER_ROLES_HEADER, roles)
+                    .header(TENANT_ID_HEADER, tenantId)
                     .build()
             )
             .build()

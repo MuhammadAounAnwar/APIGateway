@@ -2,19 +2,15 @@ server:
   port: 8762
 
 spring:
-  profiles:
-    active: dev
   application:
     name: api-gateway
 
   config:
     import: optional:file:.env  # loads environment variables from .env
 
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          issuer-uri: http://localhost:8081
+security:
+  jwt:
+    public-key: ${AUTH_SERVICE_PUBLIC_KEY:}
 
   cloud:
     gateway:
@@ -42,13 +38,13 @@ spring:
 
         # ------------------------------------------------------------------
         # Route 1: Authentication Service (PUBLIC)
+        # auth-client controller is at /api/auth/** — no path rewrite needed
         # ------------------------------------------------------------------
         - id: auth_service
-          uri: lb://AUTHENTICATION-SERVICE
+          uri: lb://auth-client
           predicates:
             - Path=/api/auth/**
           filters:
-            - RewritePath=/api/auth/(?<segment>.*), /${segment}
             - name: RequestRateLimiter
               args:
                 redis-rate-limiter.replenishRate: ${AUTH_RATE_LIMIT:10}
@@ -147,13 +143,13 @@ spring:
 
         # ------------------------------------------------------------------
         # Route 5: Notification Service (SECURED)
+        # notificationservice controller is at /api/notifications — no rewrite
         # ------------------------------------------------------------------
         - id: notification_service
-          uri: lb://NOTIFICATION-SERVICE
+          uri: lb://notificationservice
           predicates:
             - Path=/api/notifications/**
           filters:
-            - RewritePath=/api/notifications/(?<segment>.*), /${segment}
             - name: AuthPreFilter
             - name: RequestRateLimiter
               args:
@@ -175,13 +171,13 @@ spring:
 
         # ------------------------------------------------------------------
         # Route 6: Email Service (INTERNAL / SECURED)
+        # emailservice controller is at /api/mails — no rewrite
         # ------------------------------------------------------------------
         - id: email_service
-          uri: lb://EMAIL-SERVICE
+          uri: lb://emailservice
           predicates:
-            - Path=/api/emails/**
+            - Path=/api/mails/**
           filters:
-            - RewritePath=/api/emails/(?<segment>.*), /${segment}
             - name: AuthPreFilter
             - name: Retry
               args:
@@ -196,6 +192,42 @@ spring:
               args:
                 name: emailLenient
                 fallbackUri: forward:/fallback/email-service
+
+        # ------------------------------------------------------------------
+        # Route 7: Chat Service REST (SECURED)
+        # chatservice controller is at /api/v1/chat — no rewrite
+        # ------------------------------------------------------------------
+        - id: chat_service
+          uri: lb://CHAT-SERVICE
+          predicates:
+            - Path=/api/v1/chat/**
+          filters:
+            - name: AuthPreFilter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: ${CHAT_RATE_LIMIT:50}
+                redis-rate-limiter.burstCapacity: ${CHAT_BURST_CAPACITY:100}
+            - name: Retry
+              args:
+                name: default
+            - name: TimeLimiter
+              args:
+                name: default
+            - name: Bulkhead
+              args:
+                name: default
+            - name: CircuitBreaker
+              args:
+                name: default
+                fallbackUri: forward:/fallback/chat-service
+
+        # ------------------------------------------------------------------
+        # Route 8: Chat Service WebSocket (PUBLIC — JWT validated in handler)
+        # ------------------------------------------------------------------
+        - id: chat_service_ws
+          uri: lb://CHAT-SERVICE
+          predicates:
+            - Path=/ws/chat/**
 
 logging:
   level:
@@ -246,7 +278,9 @@ management:
       endpoint: http://localhost:4317
 
 ono:
-  logging:
+  observability:
+    logging:
+      enabled: true
     exceptions:
       enabled: false
     performance:

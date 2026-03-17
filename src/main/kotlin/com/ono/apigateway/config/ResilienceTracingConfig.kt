@@ -9,10 +9,8 @@ import org.slf4j.MDC
 import org.springframework.boot.ApplicationRunner
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import org.springframework.context.annotation.Profile
 
 @Configuration
-@Profile("default")
 class ResilienceTracingConfig(
     private val tracer: Tracer,
     private val retryRegistry: RetryRegistry

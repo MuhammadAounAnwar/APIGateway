@@ -18,7 +18,7 @@ import org.springframework.cloud.client.discovery.EnableDiscoveryClient
  * No business logic, repositories, or domain code should be added here.
  */
 @SpringBootApplication(
-    scanBasePackages = ["com.ono"]
+    scanBasePackages = ["com.ono.apigateway"]
 )
 @EnableDiscoveryClient
 class ApiGatewayApplication

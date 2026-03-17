@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: api-gateway
+
+  cloud:
+    discovery:
+      enabled: false
+    gateway:
+      routes: []
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+security:
+  jwt:
+    public-key: MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqjbEmNZjec5R24pUKCGO0heh9ne9ou0Os5mPv1P6VJbXUdx1E8uMxILG0IK7mnWnrA/C9CILQ+WosSzk1ALyENyStrmSC41KmFyJcjBtnDqvGihcCQdKWVgvvvYiqJinDmUw8OyiaHPVDRqvgN76oA9plgRo6eQVQ6XLbQb9aQ5WfrpeK8l8zykKF7X4H5RFTtoJ6MWALRGUHyvcV8X2POdBS4TN5s8+SDZgZeNIGj/aDVJx3029ySJEhpUDIYVXE3GLmJxhw3efjiBymNiKIEMCXfjwv0V5W9c2Y4Vw6e9I+KF/5A9EUmXdkrkcmDuuVlxEkrL5edI1Zw1rObRbUwIDAQAB
+
+eureka:
+  client:
+    enabled: false
+
+server:
+  port: 0
+
+management:
+  tracing:
+    enabled: false
+
+ono:
+  observability:
+    logging:
+      enabled: false
+    exceptions:
+      enabled: false
+    performance:
+      enabled: false

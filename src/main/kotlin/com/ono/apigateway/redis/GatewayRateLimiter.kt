@@ -7,11 +7,11 @@ import reactor.core.publisher.Mono
 import java.time.Duration
 
 @Component
-class RedisRateLimiter(
+class GatewayRateLimiter(
     private val redisTemplate: ReactiveRedisTemplate<String, String>
 ) {
 
-    private val log = LoggerFactory.getLogger(RedisRateLimiter::class.java)
+    private val log = LoggerFactory.getLogger(GatewayRateLimiter::class.java)
 
     /**
      * Fixed-window rate limiting

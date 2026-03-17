@@ -7,6 +7,7 @@ import org.springframework.security.config.annotation.method.configuration.Enabl
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity
 import org.springframework.security.config.web.server.ServerHttpSecurity
 import org.springframework.security.core.authority.SimpleGrantedAuthority
+import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter
 import org.springframework.security.oauth2.server.resource.authentication.ReactiveJwtAuthenticationConverterAdapter
 import org.springframework.security.web.server.SecurityWebFilterChain
@@ -14,7 +15,7 @@ import org.springframework.security.web.server.SecurityWebFilterChain
 @Configuration
 @EnableWebFluxSecurity
 @EnableReactiveMethodSecurity
-class SecurityConfig {
+class SecurityConfig(private val jwtDecoder: ReactiveJwtDecoder) {
 
     /**
      * Main security configuration for API Gateway.
@@ -35,6 +36,8 @@ class SecurityConfig {
                 exchanges
                     // Public endpoints (Authentication Service)
                     .pathMatchers("/api/auth/**").permitAll()
+                    // WebSocket upgrade — JWT validated inside ChatWebSocketHandler
+                    .pathMatchers("/ws/**").permitAll()
                     .pathMatchers("/actuator/health").permitAll()
                     .pathMatchers("/actuator/**").hasRole("ADMIN")
 
@@ -46,6 +49,7 @@ class SecurityConfig {
             }
             .oauth2ResourceServer { oauth2 ->
                 oauth2.jwt { jwt ->
+                    jwt.jwtDecoder(jwtDecoder)
                     jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())
                 }
             }
