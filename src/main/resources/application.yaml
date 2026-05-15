@@ -37,6 +37,45 @@ security:
       routes:
 
         # ------------------------------------------------------------------
+        # API Docs Aggregation Routes (proxy downstream /v3/api-docs through gateway)
+        # These are public — no auth needed to browse API documentation.
+        # ------------------------------------------------------------------
+        - id: docs_auth_service
+          uri: lb://auth-client
+          predicates:
+            - Path=/gateway-api-docs/auth-service
+          filters:
+            - RewritePath=/gateway-api-docs/auth-service, /v3/api-docs
+
+        - id: docs_user_service
+          uri: lb://USER-SERVICE
+          predicates:
+            - Path=/gateway-api-docs/user-service
+          filters:
+            - RewritePath=/gateway-api-docs/user-service, /v3/api-docs
+
+        - id: docs_restaurant_service
+          uri: lb://RESTAURANT-SERVICE
+          predicates:
+            - Path=/gateway-api-docs/restaurant-service
+          filters:
+            - RewritePath=/gateway-api-docs/restaurant-service, /v3/api-docs
+
+        - id: docs_order_service
+          uri: lb://ORDER-SERVICE
+          predicates:
+            - Path=/gateway-api-docs/order-service
+          filters:
+            - RewritePath=/gateway-api-docs/order-service, /v3/api-docs
+
+        - id: docs_notification_service
+          uri: lb://notificationservice
+          predicates:
+            - Path=/gateway-api-docs/notification-service
+          filters:
+            - RewritePath=/gateway-api-docs/notification-service, /v3/api-docs
+
+        # ------------------------------------------------------------------
         # Route 1: Authentication Service (PUBLIC)
         # auth-client controller is at /api/auth/** — no path rewrite needed
         # ------------------------------------------------------------------
@@ -285,3 +324,34 @@ ono:
       enabled: false
     performance:
       enabled: true
+
+# =============================
+# Swagger / OpenAPI (springdoc-openapi)
+# =============================
+springdoc:
+  swagger-ui:
+    path: /api-docs                       # Swagger UI served at /api-docs
+    disable-swagger-default-url: true
+    operations-sorter: method
+    tags-sorter: alpha
+    display-request-duration: true
+    try-it-out-enabled: true
+    # Multi-spec aggregation: gateway overview + each downstream service
+    urls:
+      - name: "Gateway Routes"
+        url: /swagger.yaml                # Static spec served from classpath static/
+      - name: "Auth Service"
+        url: /gateway-api-docs/auth-service
+      - name: "User Service"
+        url: /gateway-api-docs/user-service
+      - name: "Restaurant Service"
+        url: /gateway-api-docs/restaurant-service
+      - name: "Order Service"
+        url: /gateway-api-docs/order-service
+      - name: "Notification Service"
+        url: /gateway-api-docs/notification-service
+    urls-primary-name: "Gateway Routes"   # Default tab shown on load
+  api-docs:
+    enabled: false                        # Disable auto-generated; we use static swagger.yaml
+  cache:
+    disabled: true

@@ -81,6 +81,11 @@ dependencies {
     implementation("io.opentelemetry:opentelemetry-exporter-otlp")
 
     // -------------------------------------------------------------------------
+    // 8b. API Documentation (SpringDoc OpenAPI — WebFlux variant)
+    // -------------------------------------------------------------------------
+    implementation("org.springdoc:springdoc-openapi-starter-webflux-ui:2.5.0")
+
+    // -------------------------------------------------------------------------
     // 9. Testing
     // -------------------------------------------------------------------------
     testImplementation("org.springframework.boot:spring-boot-starter-test")

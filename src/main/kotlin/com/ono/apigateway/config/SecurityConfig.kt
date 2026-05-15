@@ -41,6 +41,16 @@ class SecurityConfig(private val jwtDecoder: ReactiveJwtDecoder) {
                     .pathMatchers("/actuator/health").permitAll()
                     .pathMatchers("/actuator/**").hasRole("ADMIN")
 
+                    // Swagger UI + static spec + downstream api-docs proxy
+                    .pathMatchers(
+                        "/api-docs/**",
+                        "/swagger-ui/**",
+                        "/swagger-ui.html",
+                        "/swagger.yaml",
+                        "/webjars/**",
+                        "/gateway-api-docs/**"
+                    ).permitAll()
+
                     // Allow preflight requests
                     .pathMatchers(HttpMethod.OPTIONS).permitAll()
 
