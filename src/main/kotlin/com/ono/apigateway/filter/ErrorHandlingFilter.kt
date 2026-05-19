@@ -1,5 +1,6 @@
 package com.ono.apigateway.filter
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import io.micrometer.tracing.Tracer
 import org.slf4j.LoggerFactory
 import org.springframework.cloud.gateway.filter.GatewayFilterChain
@@ -18,7 +19,8 @@ import java.util.concurrent.TimeoutException
 @Component
 @Order(-1) // must be outermost
 class ErrorHandlingFilter(
-    private val tracer: Tracer
+    private val tracer: Tracer,
+    private val objectMapper: ObjectMapper
 ) : GlobalFilter {
 
     private val log = LoggerFactory.getLogger(ErrorHandlingFilter::class.java)
@@ -100,15 +102,14 @@ class ErrorHandlingFilter(
         message: String,
         traceId: String?
     ): String {
-        return """
-            {
-              "timestamp": "${Instant.now()}",
-              "status": ${status.value()},
-              "error": "${status.reasonPhrase}",
-              "message": "$message",
-              "path": "${exchange.request.path}",
-              "traceId": "$traceId"
-            }
-        """.trimIndent()
+        val errorMap = mapOf(
+            "timestamp" to Instant.now().toString(),
+            "status" to status.value(),
+            "error" to status.reasonPhrase,
+            "message" to message,
+            "path" to exchange.request.path.value(),
+            "traceId" to (traceId ?: "")
+        )
+        return objectMapper.writeValueAsString(errorMap)
     }
 }

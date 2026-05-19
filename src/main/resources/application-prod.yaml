@@ -24,6 +24,24 @@ spring:
         connect-timeout: 3000
         response-timeout: 5s
 
+      # Override CORS for production: only allow the real frontend origin.
+      # Set CORS_PROD_ORIGIN env var to your frontend domain (e.g. https://app.example.com).
+      globalcors:
+        corsConfigurations:
+          '[/**]':
+            allowedOriginPatterns:
+              - "${CORS_PROD_ORIGIN}"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - PATCH
+              - OPTIONS
+            allowedHeaders: "*"
+            allowCredentials: true
+            maxAge: 3600
+
 ############################################
 # RESILIENCE (STRICT + ISOLATED FOR PROD)
 ############################################

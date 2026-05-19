@@ -1,0 +1,715 @@
+openapi: "3.0.3"
+info:
+  title: SipSync / ONO Platform — API Gateway Routes
+  version: "1.0.0"
+  description: |
+    **Gateway Overview** — all routes exposed through the API Gateway at port `8762`.
+
+    Each route proxies to a downstream microservice discovered via Eureka.
+    For full endpoint details of each service, switch to the corresponding tab in the Swagger UI dropdown.
+
+    ### Authentication
+    All endpoints except `/api/auth/**` and `/ws/**` require a **Bearer JWT** in the `Authorization` header.
+    Obtain a token via `POST /api/auth/login`.
+
+    ### Headers Injected by Gateway (downstream services receive these)
+    | Header | Value |
+    |--------|-------|
+    | `X-User-Id` | JWT `sub` claim (userId) |
+    | `X-User-Roles` | Comma-separated role list |
+    | `X-Tenant-ID` | JWT `tenantId` claim |
+    | `X-Gateway` | `API-GATEWAY` |
+
+    ### Rate Limit Headers (all responses)
+    | Header | Description |
+    |--------|-------------|
+    | `X-RateLimit-Limit` | Total quota for current window |
+    | `X-RateLimit-Remaining` | Requests remaining in window |
+    | `X-RateLimit-Reset` | Unix epoch (seconds) when window resets |
+
+servers:
+  - url: http://localhost:8762
+    description: Local development (gateway)
+
+tags:
+  - name: Auth Service
+    description: |
+      Public authentication endpoints. No JWT required.
+      Routes to `auth-client` via Eureka (`lb://auth-client`).
+      Rate limit: 10 req/s (burst 20).
+  - name: User Service
+    description: |
+      User profile management. JWT required.
+      Routes to `USER-SERVICE`. Path prefix `/api/users` is stripped before forwarding.
+      Rate limit: 20 req/s (burst 40).
+  - name: Restaurant Service
+    description: |
+      Restaurant catalogue. JWT required.
+      Routes to `RESTAURANT-SERVICE`. Path prefix `/api/restaurants` is stripped.
+      Rate limit: 30 req/s (burst 60).
+  - name: Order Service
+    description: |
+      Order lifecycle management. JWT required.
+      Routes to `ORDER-SERVICE`. Uses strict resilience profile (30% failure threshold in prod).
+      Rate limit: 15 req/s (burst 30) — lowest quota; orders are high-value operations.
+  - name: Notification Service
+    description: |
+      In-app and push notifications. JWT required.
+      Routes to `notificationservice`.
+      Rate limit: 25 req/s (burst 50).
+  - name: Email Service
+    description: |
+      Transactional email sending. JWT required. ⚠ No rate limiting configured.
+      Routes to `emailservice`. Uses lenient resilience profile (70% failure threshold).
+  - name: Chat Service
+    description: |
+      Real-time chat (REST + WebSocket). JWT required for REST; WebSocket JWT validated in handler.
+      Routes to `CHAT-SERVICE`.
+      REST rate limit: 50 req/s (burst 100).
+  - name: Gateway
+    description: Internal gateway endpoints (health, fallback).
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT access token — obtain from POST /api/auth/login
+
+  schemas:
+    GatewayErrorResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-05-13T14:30:00.000Z"
+        status:
+          type: integer
+          example: 401
+        error:
+          type: string
+          example: "Unauthorized"
+        message:
+          type: string
+          example: "Unexpected internal error"
+        path:
+          type: string
+          example: "/api/users/me"
+        traceId:
+          type: string
+          example: "4bf92f3577b34da6a3ce929d0e0e4736"
+
+    ServiceUnavailableResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+          example: 503
+        error:
+          type: string
+          example: "Service Unavailable"
+        message:
+          type: string
+          example: "USER-SERVICE is temporarily unavailable"
+        service:
+          type: string
+          example: "USER-SERVICE"
+        path:
+          type: string
+        traceId:
+          type: string
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GatewayErrorResponse'
+          example:
+            timestamp: "2026-05-13T14:30:00Z"
+            status: 401
+            error: "Unauthorized"
+            message: "Unauthorized"
+            path: "/api/users/me"
+            traceId: "abc123"
+
+    TooManyRequests:
+      description: Rate limit exceeded
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+          description: Total quota for window
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+          description: Remaining requests
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+          description: Window reset time (Unix epoch seconds)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GatewayErrorResponse'
+
+    ServiceUnavailable:
+      description: Downstream service unavailable (circuit breaker open or timeout)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ServiceUnavailableResponse'
+
+security:
+  - BearerAuth: []
+
+paths:
+
+  # ===========================================================================
+  # AUTH SERVICE — Public (no JWT required)
+  # ===========================================================================
+
+  /api/auth/register:
+    post:
+      tags: [Auth Service]
+      summary: Register a new user account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, name]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: alice@example.com
+                password:
+                  type: string
+                  minLength: 8
+                  example: "S3cur3P@ss"
+                name:
+                  type: string
+                  example: "Alice Smith"
+                role:
+                  type: string
+                  example: "ROLE_USER"
+      responses:
+        '201':
+          description: Account created; access token in body, refresh token in HttpOnly cookie
+        '400':
+          description: Validation error or email already registered
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/auth/login:
+    post:
+      tags: [Auth Service]
+      summary: Authenticate and obtain JWT tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: alice@example.com
+                password:
+                  type: string
+                  example: "S3cur3P@ss"
+      parameters:
+        - name: X-Tenant-ID
+          in: header
+          description: Tenant context (default SIPSYNC)
+          schema:
+            type: string
+            default: SIPSYNC
+      responses:
+        '200':
+          description: Login successful; access token in body, refresh token in HttpOnly cookie
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accessToken:
+                    type: string
+                  tokenType:
+                    type: string
+                    example: Bearer
+                  expiresIn:
+                    type: integer
+                    example: 3600
+        '401':
+          description: Invalid credentials
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/auth/refresh:
+    post:
+      tags: [Auth Service]
+      summary: Refresh access token using refresh token cookie
+      security: []
+      responses:
+        '200':
+          description: New access token issued; new refresh token set in cookie
+        '401':
+          description: Refresh token invalid or expired
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/auth/logout:
+    post:
+      tags: [Auth Service]
+      summary: Invalidate current session (blacklists JWT JTI in gateway Redis)
+      responses:
+        '204':
+          description: Logged out; refresh token cookie cleared
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/auth/forgot-password:
+    post:
+      tags: [Auth Service]
+      summary: Send password reset email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Reset email sent (always 200 — prevents email enumeration)
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /api/auth/reset-password:
+    post:
+      tags: [Auth Service]
+      summary: Reset password using token from email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, newPassword, confirmPassword]
+              properties:
+                token:
+                  type: string
+                newPassword:
+                  type: string
+                  minLength: 8
+                confirmPassword:
+                  type: string
+      responses:
+        '200':
+          description: Password reset; new tokens issued
+        '400':
+          description: Invalid, expired, or consumed reset token
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  # ===========================================================================
+  # USER SERVICE — JWT required
+  # Path prefix /api/users stripped before forwarding to USER-SERVICE
+  # ===========================================================================
+
+  /api/users/create:
+    post:
+      tags: [User Service]
+      summary: Create a user profile
+      description: Creates a profile record. Usually called automatically after registration.
+      responses:
+        '201':
+          description: Profile created
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/users/me:
+    get:
+      tags: [User Service]
+      summary: Get current user's profile
+      description: Extracts userId from JWT `sub` claim; returns matching profile.
+      responses:
+        '200':
+          description: Current user's profile
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Profile not found for JWT userId
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/users/{id}:
+    get:
+      tags: [User Service]
+      summary: Get user profile by internal ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: User profile
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: User not found
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      tags: [User Service]
+      summary: Update user profile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Updated profile
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: User not found
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      tags: [User Service]
+      summary: Delete user profile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: User not found
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/users:
+    get:
+      tags: [User Service]
+      summary: Find user by name or userId
+      parameters:
+        - name: name
+          in: query
+          schema:
+            type: string
+        - name: userId
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User profile
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Not found
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  # ===========================================================================
+  # RESTAURANT SERVICE — JWT required
+  # Path prefix /api/restaurants stripped before forwarding
+  # ===========================================================================
+
+  /api/restaurants/{id}:
+    get:
+      tags: [Restaurant Service]
+      summary: Get restaurant by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Restaurant details
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Not found
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/restaurants:
+    get:
+      tags: [Restaurant Service]
+      summary: List / search restaurants
+      responses:
+        '200':
+          description: Restaurant list
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      tags: [Restaurant Service]
+      summary: Create restaurant
+      responses:
+        '201':
+          description: Created
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  # ===========================================================================
+  # ORDER SERVICE — JWT required (strict resilience profile)
+  # Path prefix /api/orders stripped before forwarding
+  # ===========================================================================
+
+  /api/orders:
+    post:
+      tags: [Order Service]
+      summary: Create a new order
+      description: |
+        Uses `orderStrict` resilience profile: 30% failure threshold (prod), 45s wait, 2 retries max.
+        Rate limit is lowest of all services: 15 req/s, burst 30.
+      responses:
+        '201':
+          description: Order created
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    get:
+      tags: [Order Service]
+      summary: List orders for current user
+      responses:
+        '200':
+          description: Order list
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/orders/{orderId}:
+    get:
+      tags: [Order Service]
+      summary: Get order by ID
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Order details
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Not found
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  # ===========================================================================
+  # NOTIFICATION SERVICE — JWT required
+  # ===========================================================================
+
+  /api/notifications:
+    get:
+      tags: [Notification Service]
+      summary: List notifications for current user
+      responses:
+        '200':
+          description: Notification list
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  # ===========================================================================
+  # EMAIL SERVICE — JWT required (no rate limiting — known gap)
+  # ===========================================================================
+
+  /api/mails:
+    post:
+      tags: [Email Service]
+      summary: Send a transactional email
+      description: |
+        ⚠ **Note:** No rate limiting is configured for this route at the gateway level.
+        Uses `emailLenient` resilience profile: 70% failure threshold (prod), 8s timeout.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, type]
+              properties:
+                to:
+                  type: string
+                  format: email
+                type:
+                  type: string
+                  enum: [WELCOME, PASSWORD_RESET]
+                variables:
+                  type: object
+                  additionalProperties:
+                    type: string
+                tenantId:
+                  type: string
+      responses:
+        '200':
+          description: Email queued for delivery
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  # ===========================================================================
+  # CHAT SERVICE — JWT required (REST) / public (WebSocket)
+  # ===========================================================================
+
+  /api/v1/chat/{roomId}/messages:
+    get:
+      tags: [Chat Service]
+      summary: Fetch message history for a chat room
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Message list
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      tags: [Chat Service]
+      summary: Send a message to a chat room
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Message sent
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /ws/chat/{roomId}:
+    get:
+      tags: [Chat Service]
+      summary: WebSocket upgrade — real-time chat
+      description: |
+        Upgrades to a WebSocket connection for real-time messaging.
+
+        ⚠ **Note:** No gateway-level authentication or rate limiting. JWT validation is
+        delegated to the `CHAT-SERVICE` WebSocket handler.
+
+        Send the token as a query parameter or via the `Sec-WebSocket-Protocol` header.
+      parameters:
+        - name: roomId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: token
+          in: query
+          description: JWT token (if handler supports query-param auth)
+          schema:
+            type: string
+      security: []
+      responses:
+        '101':
+          description: Switching Protocols (WebSocket upgrade)
+        '401':
+          description: Unauthorized (rejected by downstream handler)
+
+  # ===========================================================================
+  # GATEWAY — Internal endpoints
+  # ===========================================================================
+
+  /fallback/{service}:
+    get:
+      tags: [Gateway]
+      summary: Circuit breaker fallback endpoint
+      description: |
+        Called internally by Spring Cloud Gateway's `CircuitBreaker` filter when a downstream
+        service is unavailable or the circuit is open. Not intended for direct client calls.
+      parameters:
+        - name: service
+          in: path
+          required: true
+          schema:
+            type: string
+            example: user-service
+      responses:
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /actuator/health:
+    get:
+      tags: [Gateway]
+      summary: Gateway health check
+      security: []
+      responses:
+        '200':
+          description: Gateway is up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: UP

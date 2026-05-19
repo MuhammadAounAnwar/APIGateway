@@ -38,6 +38,9 @@ class SecurityConfig(private val jwtDecoder: ReactiveJwtDecoder) {
                     .pathMatchers("/api/auth/**").permitAll()
                     // WebSocket upgrade — JWT validated inside ChatWebSocketHandler
                     .pathMatchers("/ws/**").permitAll()
+                    // Circuit breaker fallbacks must be accessible without auth;
+                    // they are only reachable via gateway internal forward, not the public internet.
+                    .pathMatchers("/fallback/**").permitAll()
                     .pathMatchers("/actuator/health").permitAll()
                     .pathMatchers("/actuator/**").hasRole("ADMIN")
 

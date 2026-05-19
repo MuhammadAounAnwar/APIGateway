@@ -6,16 +6,15 @@ spring:
     name: api-gateway
 
   config:
-    import: optional:file:.env  # loads environment variables from .env
-
-security:
-  jwt:
-    public-key: ${AUTH_SERVICE_PUBLIC_KEY:}
+    import: optional:file:.env
 
   cloud:
     gateway:
       default-filters:
-        # Adds correlation id if missing
+        # Reject payloads larger than 10 MB at the gateway edge
+        - name: RequestSize
+          args:
+            maxSize: 10MB
         - AddRequestHeader=X-Gateway, API-GATEWAY
         - AddResponseHeader=X-Gateway-Version, v1
         - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
@@ -24,7 +23,9 @@ security:
       globalcors:
         corsConfigurations:
           '[/**]':
-            allowedOrigins: "*"
+            allowedOriginPatterns:
+              - "http://localhost:3000"
+              - "http://localhost:4200"
             allowedMethods:
               - GET
               - POST
@@ -33,6 +34,8 @@ security:
               - PATCH
               - OPTIONS
             allowedHeaders: "*"
+            allowCredentials: true
+            maxAge: 3600
 
       routes:
 
@@ -41,7 +44,7 @@ security:
         # These are public — no auth needed to browse API documentation.
         # ------------------------------------------------------------------
         - id: docs_auth_service
-          uri: lb://auth-client
+          uri: lb://AUTH-CLIENT
           predicates:
             - Path=/gateway-api-docs/auth-service
           filters:
@@ -69,7 +72,7 @@ security:
             - RewritePath=/gateway-api-docs/order-service, /v3/api-docs
 
         - id: docs_notification_service
-          uri: lb://notificationservice
+          uri: lb://NOTIFICATION-SERVICE
           predicates:
             - Path=/gateway-api-docs/notification-service
           filters:
@@ -77,10 +80,9 @@ security:
 
         # ------------------------------------------------------------------
         # Route 1: Authentication Service (PUBLIC)
-        # auth-client controller is at /api/auth/** — no path rewrite needed
         # ------------------------------------------------------------------
         - id: auth_service
-          uri: lb://auth-client
+          uri: lb://AUTH-CLIENT
           predicates:
             - Path=/api/auth/**
           filters:
@@ -182,10 +184,9 @@ security:
 
         # ------------------------------------------------------------------
         # Route 5: Notification Service (SECURED)
-        # notificationservice controller is at /api/notifications — no rewrite
         # ------------------------------------------------------------------
         - id: notification_service
-          uri: lb://notificationservice
+          uri: lb://NOTIFICATION-SERVICE
           predicates:
             - Path=/api/notifications/**
           filters:
@@ -210,14 +211,17 @@ security:
 
         # ------------------------------------------------------------------
         # Route 6: Email Service (INTERNAL / SECURED)
-        # emailservice controller is at /api/mails — no rewrite
         # ------------------------------------------------------------------
         - id: email_service
-          uri: lb://emailservice
+          uri: lb://EMAIL-SERVICE
           predicates:
             - Path=/api/mails/**
           filters:
             - name: AuthPreFilter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: ${EMAIL_RATE_LIMIT:2}
+                redis-rate-limiter.burstCapacity: ${EMAIL_BURST_CAPACITY:5}
             - name: Retry
               args:
                 name: default
@@ -234,7 +238,6 @@ security:
 
         # ------------------------------------------------------------------
         # Route 7: Chat Service REST (SECURED)
-        # chatservice controller is at /api/v1/chat — no rewrite
         # ------------------------------------------------------------------
         - id: chat_service
           uri: lb://CHAT-SERVICE
@@ -261,12 +264,111 @@ security:
                 fallbackUri: forward:/fallback/chat-service
 
         # ------------------------------------------------------------------
-        # Route 8: Chat Service WebSocket (PUBLIC — JWT validated in handler)
+        # Route 8: Chat Service WebSocket (SECURED)
         # ------------------------------------------------------------------
         - id: chat_service_ws
           uri: lb://CHAT-SERVICE
           predicates:
             - Path=/ws/chat/**
+          filters:
+            - name: AuthPreFilter
+
+        # ------------------------------------------------------------------
+        # Route 8a: PicklePlay Backend API Docs (PUBLIC)
+        # ------------------------------------------------------------------
+        - id: docs_picklplay_backend
+          uri: lb://PICKLPLAY-BACKEND
+          predicates:
+            - Path=/gateway-api-docs/picklplay-backend
+          filters:
+            - RewritePath=/gateway-api-docs/picklplay-backend, /v3/api-docs
+
+        # ------------------------------------------------------------------
+        # Route 8b: PicklePlay Backend — all feature domains (SECURED)
+        # Chat service route above takes priority for /api/v1/chat/** paths.
+        # ------------------------------------------------------------------
+        - id: picklplay_backend
+          uri: lb://PICKLPLAY-BACKEND
+          predicates:
+            - Path=/api/v1/**
+          filters:
+            - name: AuthPreFilter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: ${PICKLPLAY_RATE_LIMIT:30}
+                redis-rate-limiter.burstCapacity: ${PICKLPLAY_BURST_CAPACITY:60}
+            - name: Retry
+              args:
+                name: default
+            - name: TimeLimiter
+              args:
+                name: default
+            - name: Bulkhead
+              args:
+                name: default
+            - name: CircuitBreaker
+              args:
+                name: default
+                fallbackUri: forward:/fallback/picklplay-backend
+
+        # ------------------------------------------------------------------
+        # Route 9: Spozon Backend — user sub-paths
+        # ------------------------------------------------------------------
+        - id: spozon_user_paths
+          uri: lb://SPOZON-BACKEND
+          predicates:
+            - Path=/api/users/me/matches/**,/api/users/me/analytics,/api/users/me/achievements,/api/users/me/bookings/**
+          filters:
+            - name: AuthPreFilter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: ${SPOZON_RATE_LIMIT:30}
+                redis-rate-limiter.burstCapacity: ${SPOZON_BURST_CAPACITY:60}
+            - name: CircuitBreaker
+              args:
+                name: default
+                fallbackUri: forward:/fallback/spozon-backend
+
+        # ------------------------------------------------------------------
+        # Route 10: Spozon Backend — all feature domains (SECURED)
+        # ------------------------------------------------------------------
+        - id: spozon_backend
+          uri: lb://SPOZON-BACKEND
+          predicates:
+            - Path=/api/venues/**,/api/bookings/**,/api/games/**,/api/matches/**,/api/tournaments/**,/api/coaches/**,/api/dashboard,/api/dashboard/**,/api/leaderboard,/api/leaderboard/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: ${SPOZON_RATE_LIMIT:30}
+                redis-rate-limiter.burstCapacity: ${SPOZON_BURST_CAPACITY:60}
+            - name: Retry
+              args:
+                name: default
+            - name: TimeLimiter
+              args:
+                name: default
+            - name: Bulkhead
+              args:
+                name: default
+            - name: CircuitBreaker
+              args:
+                name: default
+                fallbackUri: forward:/fallback/spozon-backend
+
+        # ------------------------------------------------------------------
+        # Route 11: Spozon Backend API Docs (PUBLIC)
+        # ------------------------------------------------------------------
+        - id: docs_spozon_backend
+          uri: lb://SPOZON-BACKEND
+          predicates:
+            - Path=/gateway-api-docs/spozon-backend
+          filters:
+            - RewritePath=/gateway-api-docs/spozon-backend, /v3/api-docs
+
+security:
+  jwt:
+    public-key: ${AUTH_SERVICE_PUBLIC_KEY:}
+    issuer: ${SECURITY_JWT_ISSUER:}
 
 logging:
   level:
@@ -316,6 +418,11 @@ management:
     tracing:
       endpoint: http://localhost:4317
 
+gateway:
+  rate-limit:
+    public-ip: ${GATEWAY_PUBLIC_IP_RATE_LIMIT:50}
+    per-user: ${GATEWAY_PER_USER_RATE_LIMIT:200}
+
 ono:
   observability:
     logging:
@@ -324,22 +431,20 @@ ono:
       enabled: false
     performance:
       enabled: true
+    metrics:
+      serviceName: api-gateway
 
-# =============================
-# Swagger / OpenAPI (springdoc-openapi)
-# =============================
 springdoc:
   swagger-ui:
-    path: /api-docs                       # Swagger UI served at /api-docs
+    path: /api-docs
     disable-swagger-default-url: true
     operations-sorter: method
     tags-sorter: alpha
     display-request-duration: true
     try-it-out-enabled: true
-    # Multi-spec aggregation: gateway overview + each downstream service
     urls:
       - name: "Gateway Routes"
-        url: /swagger.yaml                # Static spec served from classpath static/
+        url: /swagger.yaml
       - name: "Auth Service"
         url: /gateway-api-docs/auth-service
       - name: "User Service"
@@ -350,8 +455,12 @@ springdoc:
         url: /gateway-api-docs/order-service
       - name: "Notification Service"
         url: /gateway-api-docs/notification-service
-    urls-primary-name: "Gateway Routes"   # Default tab shown on load
+      - name: "Spozon Backend"
+        url: /gateway-api-docs/spozon-backend
+      - name: "PicklePlay Backend"
+        url: /gateway-api-docs/picklplay-backend
+    urls-primary-name: "Gateway Routes"
   api-docs:
-    enabled: false                        # Disable auto-generated; we use static swagger.yaml
+    enabled: false
   cache:
     disabled: true

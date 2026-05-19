@@ -16,6 +16,12 @@ class GatewayFallbackController(
     private val tracer: Tracer
 ) {
 
+    private val knownServices = setOf(
+        "AUTH-SERVICE", "USER-SERVICE", "ORDER-SERVICE",
+        "RESTAURANT-SERVICE", "NOTIFICATION-SERVICE",
+        "EMAIL-SERVICE", "CHAT-SERVICE", "SPOZON-BACKEND"
+    )
+
     private fun buildFallbackResponse(
         request: ServerHttpRequest,
         serviceName: String,
@@ -46,6 +52,9 @@ class GatewayFallbackController(
     ): ResponseEntity<Map<String, Any>> {
 
         val normalizedService = service.uppercase()
+        if (normalizedService !in knownServices) {
+            return ResponseEntity.notFound().build()
+        }
 
         return buildFallbackResponse(
             request,

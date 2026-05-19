@@ -7,6 +7,7 @@ import com.ono.apigateway.security.RouteValidator
 import com.ono.apigateway.util.*
 import io.micrometer.tracing.Tracer
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.cloud.gateway.filter.GatewayFilter
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory
 import org.springframework.stereotype.Component
@@ -20,7 +21,9 @@ class AuthPreFilterGatewayFilterFactory(
     private val routeValidator: RouteValidator,
     private val rateLimiter: GatewayRateLimiter,
     private val tokenStoreService: TokenStoreService,
-    private val tracer: Tracer
+    private val tracer: Tracer,
+    @Value("\${gateway.rate-limit.public-ip:50}") private val publicIpRateLimit: Int,
+    @Value("\${gateway.rate-limit.per-user:200}") private val perUserRateLimit: Int
 ) : AbstractGatewayFilterFactory<AuthPreFilterGatewayFilterFactory.Config>(Config::class.java) {
 
     private val log = LoggerFactory.getLogger(javaClass)
@@ -47,14 +50,14 @@ class AuthPreFilterGatewayFilterFactory(
             if (!routeValidator.isSecured(path)) {
                 val key = RedisKeys.rateByIp(ip)
                 return@GatewayFilter rateLimiter
-                    .isAllowed(key, 50, 60)
+                    .isAllowed(key, publicIpRateLimit, 60)
                     .flatMap { allowed ->
 
                         tracer.tagRateLimit("ip", key, allowed)
 
                         if (!allowed) return@flatMap tooManyRequests()
 
-                        addRateLimitHeaders(exchange, key, 50)
+                        addRateLimitHeaders(exchange, key, publicIpRateLimit)
                             .then(chain.filter(exchange))
                     }
             }
@@ -75,7 +78,7 @@ class AuthPreFilterGatewayFilterFactory(
 
                     val rateKey = RedisKeys.rateByUser(userId)
 
-                    rateLimiter.isAllowed(rateKey, 200, 60)
+                    rateLimiter.isAllowed(rateKey, perUserRateLimit, 60)
                         .flatMap { allowed ->
 
                             tracer.tagRateLimit("user", rateKey, allowed)
@@ -103,7 +106,7 @@ class AuthPreFilterGatewayFilterFactory(
                                     val tenantId = jwt.getClaim<String>("tenantId") ?: "default"
 
                                     cacheMono.then(
-                                        addRateLimitHeaders(exchange, rateKey, 200)
+                                        addRateLimitHeaders(exchange, rateKey, perUserRateLimit)
                                             .then(chain.filter(mutate(exchange, userId, roles, tenantId)))
                                     )
                                 }

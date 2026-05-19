@@ -1,21 +1,23 @@
 package com.ono.apigateway.security
 
 import org.springframework.stereotype.Component
+import org.springframework.util.AntPathMatcher
 
 @Component
 class RouteValidator {
 
-    private val openApiEndpoints = listOf(
-        "/auth/login",
-        "/auth/register",
-        "/auth/forgot-password",
-        "/auth/reset-password",
-        "/auth/refresh",
-        "/ws/"              // WebSocket connections — JWT validated in handler
+    private val matcher = AntPathMatcher()
+
+    private val openApiPatterns = listOf(
+        "/api/auth/**",
+        "/oauth2/**",
+        "/ws/**",
+        "/actuator/health",
+        "/actuator/health/**"
     )
 
     fun isSecured(uri: String): Boolean {
-        return openApiEndpoints.none { uri.contains(it) }
+        return openApiPatterns.none { matcher.match(it, uri) }
     }
 
 }

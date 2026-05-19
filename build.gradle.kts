@@ -92,6 +92,7 @@ dependencies {
     testImplementation("org.springframework.security:spring-security-test")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation("io.projectreactor:reactor-test")
+    testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
