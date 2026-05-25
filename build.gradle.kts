@@ -64,7 +64,7 @@ dependencies {
     // -------------------------------------------------------------------------
     // 6. Shared Observability Library
     // -------------------------------------------------------------------------
-    implementation("com.github.MuhammadAounAnwar:logginglibrary-spring-boot-starter:1.0.6")
+    implementation("com.github.MuhammadAounAnwar:logginglibrary:1.0.8")
 
     // Logbook — HTTP request/response logging (logginglibrary uses compileOnly, must add explicitly)
     implementation("org.zalando:logbook-spring-boot-starter:3.9.0")
@@ -86,7 +86,12 @@ dependencies {
     implementation("org.springdoc:springdoc-openapi-starter-webflux-ui:2.5.0")
 
     // -------------------------------------------------------------------------
-    // 9. Testing
+    // 9. Firebase Admin SDK (App Check verification)
+    // -------------------------------------------------------------------------
+    implementation("com.google.firebase:firebase-admin:9.3.0")
+
+    // -------------------------------------------------------------------------
+    // 10. Testing
     // -------------------------------------------------------------------------
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.security:spring-security-test")

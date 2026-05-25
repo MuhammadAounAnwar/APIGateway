@@ -36,6 +36,8 @@ class SecurityConfig(private val jwtDecoder: ReactiveJwtDecoder) {
                 exchanges
                     // Public endpoints (Authentication Service)
                     .pathMatchers("/api/auth/**").permitAll()
+                    // Guest FCM device registration — App Check enforces integrity, no Bearer needed
+                    .pathMatchers("/api/v1/guest/**").permitAll()
                     // WebSocket upgrade — JWT validated inside ChatWebSocketHandler
                     .pathMatchers("/ws/**").permitAll()
                     // Circuit breaker fallbacks must be accessible without auth;

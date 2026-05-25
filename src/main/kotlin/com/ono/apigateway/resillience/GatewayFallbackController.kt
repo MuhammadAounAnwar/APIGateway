@@ -4,7 +4,6 @@ import io.micrometer.tracing.Tracer
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.http.server.reactive.ServerHttpRequest
-import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
@@ -19,7 +18,8 @@ class GatewayFallbackController(
     private val knownServices = setOf(
         "AUTH-SERVICE", "USER-SERVICE", "ORDER-SERVICE",
         "RESTAURANT-SERVICE", "NOTIFICATION-SERVICE",
-        "EMAIL-SERVICE", "CHAT-SERVICE", "SPOZON-BACKEND"
+        "EMAIL-SERVICE", "CHAT-SERVICE", "SPOZON-BACKEND",
+        "PICKLPLAY-BACKEND"
     )
 
     private fun buildFallbackResponse(
@@ -45,7 +45,7 @@ class GatewayFallbackController(
             .body(body)
     }
 
-    @GetMapping("/{service}")
+    @RequestMapping("/{service}")
     fun serviceFallback(
         request: ServerHttpRequest,
         @PathVariable service: String

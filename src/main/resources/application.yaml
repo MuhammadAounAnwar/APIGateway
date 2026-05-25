@@ -1,5 +1,9 @@
 server:
   port: 8762
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/plain
+    min-response-size: 1024
 
 spring:
   application:
@@ -183,7 +187,17 @@ spring:
                 fallbackUri: forward:/fallback/order-service
 
         # ------------------------------------------------------------------
-        # Route 5: Notification Service (SECURED)
+        # Route 5a: Guest Device Registration (PUBLIC — App Check enforced)
+        # ------------------------------------------------------------------
+        - id: guest_device_service
+          uri: lb://NOTIFICATION-SERVICE
+          predicates:
+            - Path=/api/v1/guest/**
+          filters:
+            - name: AuthPreFilter
+
+        # ------------------------------------------------------------------
+        # Route 5b: Notification Service (SECURED)
         # ------------------------------------------------------------------
         - id: notification_service
           uri: lb://NOTIFICATION-SERVICE
@@ -235,6 +249,22 @@ spring:
               args:
                 name: emailLenient
                 fallbackUri: forward:/fallback/email-service
+
+        # ------------------------------------------------------------------
+        # Route 6b: Notification Service — user-facing v1 paths (SECURED)
+        # FCM token registration, user notification feed — JWT auth via Gateway.
+        # Must come before the /api/v1/** Pickleplay catch-all.
+        # ------------------------------------------------------------------
+        - id: notification_service_v1
+          uri: lb://NOTIFICATION-SERVICE
+          predicates:
+            - Path=/api/v1/notifications/**
+          filters:
+            - name: AuthPreFilter
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: ${NOTIFICATION_RATE_LIMIT:25}
+                redis-rate-limiter.burstCapacity: ${NOTIFICATION_BURST_CAPACITY:50}
 
         # ------------------------------------------------------------------
         # Route 7: Chat Service REST (SECURED)
@@ -464,3 +494,8 @@ springdoc:
     enabled: false
   cache:
     disabled: true
+
+# Firebase App Check — leave blank to disable App Check enforcement (dev default)
+firebase:
+  service-account-json: ${FIREBASE_SERVICE_ACCOUNT_JSON:}
+  disabled: true
