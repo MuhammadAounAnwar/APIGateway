@@ -1,0 +1,138 @@
+############################################
+# LOCAL-PROD PROFILE — API GATEWAY
+# Real Redis, real Eureka, real resilience config.
+# Run with: -Dspring.profiles.active=local-prod
+############################################
+
+server:
+  port: 8762
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka:eureka-dev-secret@localhost:8761/eureka
+    enabled: true
+
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+
+  cloud:
+    gateway:
+      httpclient:
+        connect-timeout: 5000
+        response-timeout: 10s
+
+############################################
+# RESILIENCE (PRODUCTION-GRADE)
+############################################
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        registerHealthIndicator: true
+        slidingWindowSize: 20
+        minimumNumberOfCalls: 10
+        failureRateThreshold: 50
+        slowCallRateThreshold: 50
+        slowCallDurationThreshold: 2s
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 5
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+
+    instances:
+      default:
+        baseConfig: default
+
+      orderStrict:
+        baseConfig: default
+        failureRateThreshold: 40
+        waitDurationInOpenState: 60s
+
+      emailLenient:
+        baseConfig: default
+        failureRateThreshold: 60
+        waitDurationInOpenState: 15s
+
+  retry:
+    configs:
+      default:
+        maxAttempts: 3
+        waitDuration: 500ms
+        retryExceptions:
+          - java.io.IOException
+          - java.net.ConnectException
+
+    instances:
+      default:
+        baseConfig: default
+
+      orderStrict:
+        baseConfig: default
+        maxAttempts: 2
+        waitDuration: 400ms
+
+      emailLenient:
+        baseConfig: default
+        maxAttempts: 4
+        waitDuration: 600ms
+
+  bulkhead:
+    instances:
+      default:
+        maxConcurrentCalls: 100
+        maxWaitDuration: 0
+
+      orderStrict:
+        maxConcurrentCalls: 50
+        maxWaitDuration: 0
+
+      emailLenient:
+        maxConcurrentCalls: 30
+        maxWaitDuration: 0
+
+  timelimiter:
+    instances:
+      default:
+        timeoutDuration: 5s
+        cancelRunningFuture: true
+
+      orderStrict:
+        timeoutDuration: 3s
+        cancelRunningFuture: true
+
+      emailLenient:
+        timeoutDuration: 8s
+        cancelRunningFuture: true
+
+############################################
+# OBSERVABILITY
+############################################
+
+management:
+  tracing:
+    sampling:
+      probability: 0.1  # sample 10% in local-prod
+
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+
+  endpoint:
+    health:
+      show-details: always
+
+############################################
+# SECURITY — RSA public key from AuthClient
+############################################
+
+security:
+  jwt:
+    public-key: ${AUTH_SERVICE_PUBLIC_KEY:}
+    issuer: ${SECURITY_JWT_ISSUER:spozon-auth}
