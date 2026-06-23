@@ -36,7 +36,7 @@ class SecurityConfig(private val jwtDecoder: ReactiveJwtDecoder) {
                 exchanges
                     // Public endpoints (Authentication Service)
                     .pathMatchers("/api/auth/**").permitAll()
-                    // Public endpoints (Onboarding, etc.) — no authentication required
+                    // Public endpoints — no authentication required
                     .pathMatchers("/api/v1/public/**").permitAll()
                     // Guest FCM device registration — App Check enforces integrity, no Bearer needed
                     .pathMatchers("/api/v1/guest/**").permitAll()
