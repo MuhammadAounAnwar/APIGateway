@@ -7,13 +7,10 @@
 server:
   port: 8762
 
-eureka:
-  client:
-    service-url:
-      defaultZone: http://eureka:eureka-dev-secret@localhost:8761/eureka
-    enabled: true
-
 spring:
+  main:
+    allow-bean-definition-overriding: true  # Allow overriding bean definitions
+
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -26,6 +23,15 @@ spring:
       httpclient:
         connect-timeout: 5000
         response-timeout: 10s
+
+eureka:
+  instance:
+    hostname: localhost                    # Register with localhost for local testing
+    prefer-ip-address: false               # Use hostname instead of IP
+  client:
+    service-url:
+      defaultZone: ${EUREKA_ZONE}
+    enabled: true
 
 ############################################
 # RESILIENCE (PRODUCTION-GRADE)
@@ -110,23 +116,41 @@ resilience4j:
         timeoutDuration: 8s
         cancelRunningFuture: true
 
+# ─────────────────────────────────────────────────────────────────────────────
+# LOGGING: Production-level, but with DEBUG for gateway code (dev observability)
+# ─────────────────────────────────────────────────────────────────────────────
+logging:
+  level:
+    root: WARN           # Prod-like: WARN root level
+    org.springframework: WARN
+    org.springframework.cloud: INFO
+    org.springframework.cloud.gateway: DEBUG  # Dev: Debug gateway routing
+    com.ono: DEBUG       # Dev: Debug our code
+
 ############################################
-# OBSERVABILITY
+# OBSERVABILITY — Production-grade with dev visibility
 ############################################
 
 management:
   tracing:
     sampling:
-      probability: 0.1  # sample 10% in local-prod
+      probability: 0.5  # Dev: sample 50% of traces for debugging (was 10%)
 
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus
+        include: health,info,metrics,prometheus,threaddump,heapdump  # Dev: added dumps
 
   endpoint:
     health:
       show-details: always
+      probes:
+        enabled: true
+
+  metrics:
+    export:
+      prometheus:
+        enabled: true
 
 ############################################
 # SECURITY — RSA public key from AuthClient

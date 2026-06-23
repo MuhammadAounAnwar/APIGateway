@@ -1,0 +1,417 @@
+================================================================================
+                    API GATEWAY REQUEST FLOW DIAGRAM
+================================================================================
+Stack: Spring Boot 3.3.5 | Spring Cloud 2023.0.1 | Gateway 4.1.1 | Java 21
+
+FILTER EXECUTION ORDER (lower order number = outermost = runs FIRST):
+  -300  CorrelationIdFilter  (outermost — uses ServerHttpRequestDecorator)
+  -250  AppCheckGatewayFilter
+  -200  InternalPathBlockFilter
+  ~-100  Spring Security WebFilter
+    -1  ErrorHandlingFilter  (innermost global filter — catches route/downstream errors)
+ Route  AuthPreFilter, Retry, CircuitBreaker, Default Filters
+
+KEY PATTERNS:
+  • Header mutation via ServerHttpRequestDecorator (not request.mutate().header())
+  • Response headers via response.beforeCommit{} (not Mono.fromRunnable after chain)
+  • picklplay_backend: NO built-in RequestRateLimiter — AuthPreFilter handles all limiting
+================================================================================
+
+CLIENT REQUEST
+    │
+    └─→ http://localhost:8762/api/v1/public/onboarding/slides
+        ↓
+================================================================================
+GLOBAL FILTERS (Applied to ALL requests — executed outermost-first: -300 → -1)
+================================================================================
+    ↓
+    ┌─────────────────────────────────────────────────────────────┐
+    │ 1. CorrelationIdFilter (Order: -300)  ← OUTERMOST          │
+    │    ├─ Check: does request have X-Request-ID header?         │
+    │    ├─ NO  → Generate new UUID                              │
+    │    ├─ YES → Use existing value                             │
+    │    ├─ Inject into request via ServerHttpRequestDecorator   │
+    │    │    (overrides getHeaders() with fresh mutable copy)   │
+    │    └─ Echo to response via response.beforeCommit{} hook    │
+    └─────────────────────────────────────────────────────────────┘
+    ↓
+    ┌─────────────────────────────────────────────────────────────┐
+    │ 2. AppCheckGatewayFilter (Order: -250, OPTIONAL)            │
+    │    ├─ Is path exempt? (/actuator, /api/auth, /ws, etc.)   │
+    │    ├─ YES → Skip filter                                     │
+    │    ├─ NO  → Check X-Firebase-AppCheck header               │
+    │    │      └─ Call Firebase API to verify token             │
+    │    │      └─ If invalid: 401 UNAUTHORIZED                  │
+    │    └─ Only active if FIREBASE_SERVICE_ACCOUNT_JSON set      │
+    └─────────────────────────────────────────────────────────────┘
+    ↓
+    ┌─────────────────────────────────────────────────────────────┐
+    │ 3. InternalPathBlockFilter (Order: -200)                    │
+    │    ├─ Does path start with /internal/?                      │
+    │    ├─ YES → Return 403 FORBIDDEN                            │
+    │    └─ NO  → Continue                                        │
+    └─────────────────────────────────────────────────────────────┘
+    ↓
+================================================================================
+SPRING SECURITY AUTHORIZATION (~Order -100)
+================================================================================
+    ↓
+    ┌─────────────────────────────────────────────────────────────┐
+    │ SecurityConfig.securityWebFilterChain()                     │
+    │                                                              │
+    │ Check path against permit patterns:                         │
+    │   • /api/auth/**        → ✅ PERMIT ALL                     │
+    │   • /api/v1/public/**   → ✅ PERMIT ALL  ← OUR PATH        │
+    │   • /api/v1/guest/**    → ✅ PERMIT ALL                     │
+    │   • /ws/**              → ✅ PERMIT ALL                     │
+    │   • /fallback/**        → ✅ PERMIT ALL                     │
+    │   • /api-docs/**        → ✅ PERMIT ALL                     │
+    │   • /actuator/health    → ✅ PERMIT ALL                     │
+    │   • /actuator/**        → ✅ REQUIRE ADMIN                 │
+    │   • OPTIONS             → ✅ PERMIT ALL (CORS)             │
+    │   • Everything else     → ❌ AUTHENTICATED REQUIRED         │
+    │                                                              │
+    │ For protected paths:                                        │
+    │   └─ ReactiveJwtDecoder validates JWT                       │
+    │      └─ JwtAuthenticationConverter extracts roles           │
+    │         └─ Stores Authentication in SecurityContext        │
+    └─────────────────────────────────────────────────────────────┘
+    ↓ (Path is public - no JWT needed)
+    ┌─────────────────────────────────────────────────────────────┐
+    │ 4. ErrorHandlingFilter (Order: -1)  ← INNERMOST GLOBAL     │
+    │    ├─ Wraps: route-level filters + downstream service calls │
+    │    ├─ CATCHES exceptions from route filters & downstream    │
+    │    │  → On error: write JSON error response (500/503/etc.) │
+    │    └─ Does NOT catch: errors from global filters above it   │
+    │       (CorrelationId, AppCheck, InternalBlock, Security)    │
+    └─────────────────────────────────────────────────────────────┘
+    ↓
+================================================================================
+ROUTE MATCHING
+================================================================================
+    ↓
+    ┌─────────────────────────────────────────────────────────────┐
+    │ application.yaml routes evaluated in order:                 │
+    │                                                              │
+    │ Route ID: picklplay_backend matches /api/v1/**             │
+    │   └─ Predicate: Path=/api/v1/**                             │
+    │   └─ URI: lb://PICKLPLAY-BACKEND (load balanced)            │
+    │   └─ Filters:                                               │
+    │      ├─ AuthPreFilter                                       │
+    │      ├─ Retry (default policy)                              │
+    │      └─ CircuitBreaker (fallback)                           │
+    │                                                              │
+    │ ✅ MATCH FOUND: picklplay_backend                           │
+    └─────────────────────────────────────────────────────────────┘
+    ↓
+================================================================================
+ROUTE-LEVEL FILTERS
+================================================================================
+    ↓
+    ┌─────────────────────────────────────────────────────────────┐
+    │ Filter 1: AuthPreFilterGatewayFilterFactory                 │
+    │                                                              │
+    │ Step A: Check if route is public/secured                    │
+    │    └─ RouteValidator.isSecured("/api/v1/public/...")       │
+    │       └─ Matches pattern "/api/v1/public/**"                │
+    │       └─ Result: PUBLIC (no JWT required)                   │
+    │                                                              │
+    │ Step B: Rate limit by IP                                    │
+    │    ├─ Get client IP: extract from request                   │
+    │    ├─ Create Redis key: "rate_ip:{ip}"                      │
+    │    ├─ GatewayRateLimiter.isAllowed(key, limit=50, 60s)     │
+    │    │  └─ Redis INCR on key                                  │
+    │    │  └─ If count > 50: return false                        │
+    │    │  └─ Otherwise: return true                             │
+    │    ├─ If rate limited: return 429 TOO_MANY_REQUESTS        │
+    │    │                                                         │
+    │    └─ Add response headers:                                  │
+    │       ├─ X-RateLimit-Limit: 50                              │
+    │       ├─ X-RateLimit-Remaining: {remaining}                 │
+    │       └─ X-RateLimit-Reset: {unix_timestamp}                │
+    │                                                              │
+    │ Step C: Continue (for public routes, no JWT needed)         │
+    │    └─ → Next filter                                         │
+    │                                                              │
+    │ Note: For secured routes, this filter would:                │
+    │    ├─ Extract JWT from Authorization header                 │
+    │    ├─ Validate JWT signature                                │
+    │    ├─ Check if token is blacklisted                         │
+    │    ├─ Rate limit by user ID                                 │
+    │    └─ Add X-User-Id, X-User-Roles headers                  │
+    └─────────────────────────────────────────────────────────────┘
+    ↓
+    ┌─────────────────────────────────────────────────────────────┐
+    │ Filter 2: DEFAULT FILTERS (from application.yaml)           │
+    │                                                              │
+    │ ├─ RequestSize: Reject payloads > 10 MB                     │
+    │ ├─ AddRequestHeader: X-Gateway = API-GATEWAY                │
+    │ ├─ AddResponseHeader: X-Gateway-Version = v1                │
+    │ ├─ DedupeResponseHeader: CORS headers                       │
+    │ └─ RemoveResponseHeader: Server                             │
+    └─────────────────────────────────────────────────────────────┘
+    ↓
+    ┌─────────────────────────────────────────────────────────────┐
+    │ Filter 3: RESILIENCE (Retry + CircuitBreaker)               │
+    │                                                              │
+    │ Retry:                                                       │
+    │   ├─ Policy: "default"                                      │
+    │   ├─ Retries on: 5xx errors, timeouts                       │
+    │   └─ Max attempts: 3 (default)                              │
+    │                                                              │
+    │ CircuitBreaker:                                             │
+    │   ├─ Monitors downstream service health                     │
+    │   ├─ If too many failures:                                  │
+    │   │  └─ Open circuit                                        │
+    │   │  └─ Forward to: /fallback/picklplay-backend             │
+    │   │  └─ Return: 503 SERVICE_UNAVAILABLE                     │
+    │   └─ Heals gradually as service recovers                    │
+    └─────────────────────────────────────────────────────────────┘
+    ↓
+================================================================================
+SERVICE DISCOVERY
+================================================================================
+    ↓
+    ┌─────────────────────────────────────────────────────────────┐
+    │ LoadBalancer Resolution (Spring Cloud Netflix)              │
+    │                                                              │
+    │ URI: lb://PICKLPLAY-BACKEND                                 │
+    │   └─ Query Eureka Server (localhost:8761)                   │
+    │      └─ Service name: PICKLPLAY-BACKEND                     │
+    │      └─ Get instances:                                      │
+    │         └─ 192.168.100.153:PICKLPLAY-BACKEND:8090 (UP)      │
+    │      └─ Select instance (round-robin)                       │
+    │      └─ Real destination: http://192.168.100.153:8090       │
+    └─────────────────────────────────────────────────────────────┘
+    ↓
+================================================================================
+DOWNSTREAM SERVICE CALL
+================================================================================
+    ↓
+    GET http://192.168.100.153:8090/api/v1/public/onboarding/slides
+    Headers:
+      X-Request-ID: abc-123-def-456
+      X-Gateway: API-GATEWAY
+      X-Forwarded-For: {client-ip}
+      X-Forwarded-Proto: http
+      (no JWT header - it's a public route)
+    ↓
+    ┌─────────────────────────────────────────────────────────────┐
+    │ PicklePlay Backend                                          │
+    │ - Receives request                                          │
+    │ - Looks up endpoint: GET /api/v1/public/onboarding/slides  │
+    │ - Calls controller                                          │
+    │ - Queries database                                          │
+    │ - Returns 4 slides                                          │
+    │ ✅ HTTP 200 OK                                              │
+    │ JSON: { slides: [...] }                                     │
+    └─────────────────────────────────────────────────────────────┘
+    ↓
+================================================================================
+RESPONSE PROCESSING (Filters run in REVERSE)
+================================================================================
+    ↓
+    ┌─────────────────────────────────────────────────────────────┐
+    │ Response Filters (in reverse order)                         │
+    │                                                              │
+    │ CircuitBreaker:                                             │
+    │   └─ Record success (circuit healing)                       │
+    │                                                              │
+    │ Retry:                                                       │
+    │   └─ No retry needed (200 OK)                               │
+    │                                                              │
+    │ Default Filters:                                            │
+    │   ├─ AddResponseHeader: X-Gateway-Version: v1 ✅ ADDED      │
+    │   ├─ RemoveResponseHeader: Server ✅ REMOVED                │
+    │   └─ DedupeResponseHeader: CORS ✅ DEDUPE                   │
+    │                                                              │
+    │ AuthPreFilter:                                              │
+    │   └─ No-op (already processed)                              │
+    └─────────────────────────────────────────────────────────────┘
+    ↓
+    ┌─────────────────────────────────────────────────────────────┐
+    │ Global Filters (in REVERSE order — innermost first)         │
+    │                                                              │
+    │ ErrorHandlingFilter (Order: -1):                            │
+    │   └─ No-op (no error occurred)                              │
+    │                                                              │
+    │ InternalPathBlockFilter (Order: -200):                      │
+    │   └─ No-op                                                  │
+    │                                                              │
+    │ AppCheckGatewayFilter (Order: -250):                        │
+    │   └─ No-op                                                  │
+    │                                                              │
+    │ CorrelationIdFilter (Order: -300, OUTERMOST):              │
+    │   └─ X-Request-ID already queued via beforeCommit hook ✅   │
+    │      (fires just before headers are written to client)      │
+    └─────────────────────────────────────────────────────────────┘
+    ↓
+================================================================================
+RESPONSE TO CLIENT
+================================================================================
+    ↓
+HTTP 200 OK
+Content-Type: application/json
+X-Request-ID: abc-123-def-456
+X-Gateway: API-GATEWAY
+X-Gateway-Version: v1
+X-RateLimit-Limit: 50
+X-RateLimit-Remaining: 49
+X-RateLimit-Reset: 1687500123
+
+{
+  "slides": [
+    {
+      "id": 1,
+      "title": "Welcome to PicklePlay",
+      "description": "Get started with our app",
+      "imageUrl": "..."
+    },
+    ...
+  ]
+}
+    ↓
+CLIENT ✅ SUCCESS
+
+
+================================================================================
+                        SECURED ROUTE EXAMPLE
+              (POST /api/v1/matches with Authorization header)
+================================================================================
+
+CLIENT REQUEST
+    │
+    └─→ POST http://localhost:8762/api/v1/matches
+        Headers:
+          Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+          X-Request-ID: user-123-abc
+        ↓
+[Global Filters 1-4: Same as above]
+    ↓
+    ┌─────────────────────────────────────────────────────────────┐
+    │ SecurityConfig Check                                        │
+    │   Path: /api/v1/matches                                     │
+    │   NOT in public patterns                                    │
+    │   → Requires authentication                                 │
+    │                                                              │
+    │   Extract JWT from Authorization header                     │
+    │   ReactiveJwtDecoder validates:                             │
+    │     ├─ Signature (using public key)                         │
+    │     ├─ Expiration                                           │
+    │     └─ Issuer                                               │
+    │                                                              │
+    │   JwtAuthenticationConverter extracts:                       │
+    │     ├─ Subject (user ID)                                    │
+    │     └─ Roles claim                                          │
+    │                                                              │
+    │   Authentication stored in SecurityContext ✅               │
+    └─────────────────────────────────────────────────────────────┘
+    ↓
+    ┌─────────────────────────────────────────────────────────────┐
+    │ AuthPreFilterGatewayFilterFactory (SECURED)                 │
+    │                                                              │
+    │ Step A: RouteValidator.isSecured("/api/v1/matches")        │
+    │   → NOT in public patterns                                  │
+    │   → Result: SECURED (JWT required)                          │
+    │                                                              │
+    │ Step B: Extract authentication context                      │
+    │   └─ exchange.requireAuthContext()                          │
+    │      ├─ Get principal from SecurityContext                  │
+    │      ├─ Cast to Jwt                                         │
+    │      └─ Create AuthContext(jwt, roles)                      │
+    │                                                              │
+    │ Step C: Extract claims from JWT                             │
+    │   ├─ userId = jwt.subject  (sub claim)                      │
+    │   ├─ jti = jwt.id          (jti claim)                      │
+    │   └─ tenantId = jwt.getClaim("tenantId")                    │
+    │                                                              │
+    │ Step D: Rate limit by user                                  │
+    │   ├─ Create Redis key: "rate_user:{userId}"                 │
+    │   ├─ Limit: 200 requests per 60s                            │
+    │   ├─ Check Redis: INCR and TTL                              │
+    │   ├─ If > 200: return 429 TOO_MANY_REQUESTS                │
+    │   │                                                          │
+    │   └─ Add response headers:                                   │
+    │      ├─ X-RateLimit-Limit: 200                              │
+    │      ├─ X-RateLimit-Remaining: {remaining}                  │
+    │      └─ X-RateLimit-Reset: {unix_timestamp}                 │
+    │                                                              │
+    │ Step E: Check token blacklist                               │
+    │   └─ TokenStoreService.isBlacklisted(jti)                   │
+    │      └─ Query Redis for jti in blacklist set                │
+    │      └─ If YES: return 401 UNAUTHORIZED "Token blacklisted" │
+    │      └─ If NO: continue                                     │
+    │                                                              │
+    │ Step F: Cache token (if TTL > 0)                            │
+    │   └─ TokenStoreService.cacheIfAbsent(jti, userId, ttl)      │
+    │      └─ Store in Redis with expiration                      │
+    │      └─ Speeds up subsequent checks                         │
+    │                                                              │
+    │ Step G: Mutate request with auth headers                    │
+    │   └─ Uses ServerHttpRequestDecorator (not request.mutate()) │
+    │      Creates fresh mutable HttpHeaders copy with:           │
+    │      ├─ X-User-Id: {userId}                                 │
+    │      ├─ X-User-Roles: {roles}  (comma-separated)            │
+    │      └─ X-Tenant-ID: {tenantId}                             │
+    │                                                              │
+    │ → Continue to next filter                                    │
+    └─────────────────────────────────────────────────────────────┘
+    ↓
+[Default filters, resilience, service discovery: Same as public route]
+    ↓
+POST http://192.168.100.153:8090/api/v1/matches
+Headers:
+  X-Request-ID: user-123-abc
+  X-Gateway: API-GATEWAY
+  X-User-Id: user-456
+  X-User-Roles: ROLE_USER,ROLE_MATCH_ORGANIZER
+  X-Tenant-ID: tenant-789
+    ↓
+PicklePlay Backend
+  ├─ Receives request
+  ├─ Reads X-User-Id header to identify requester
+  ├─ Checks X-User-Roles for authorization
+  ├─ Processes request in tenant context (X-Tenant-ID)
+  └─ Returns result
+    ↓
+HTTP 200 OK
+
+
+================================================================================
+                        EMERGENCY FALLBACK EXAMPLE
+                  (PicklePlay Backend is DOWN)
+================================================================================
+
+[All previous filters pass]
+    ↓
+Service Discovery
+  └─ Query Eureka for PICKLPLAY-BACKEND
+     └─ Status: DOWN (no healthy instances)
+    ↓
+CircuitBreaker detects failure
+  └─ OPEN circuit (too many failures)
+  └─ fallbackUri: forward:/fallback/picklplay-backend
+    ↓
+Request forwarded to: /fallback/picklplay-backend
+    ↓
+GatewayFallbackController.serviceFallback()
+  ├─ @PathVariable service: "picklplay-backend"
+  ├─ Validate service in knownServices set
+  ├─ Build fallback response:
+  │  ├─ status: 503 SERVICE_UNAVAILABLE
+  │  ├─ message: "PICKLPLAY-BACKEND is temporarily unavailable"
+  │  ├─ traceId: {traceId}
+  │  └─ timestamp: {now}
+  └─ Return ResponseEntity with status 503
+    ↓
+HTTP 503 SERVICE_UNAVAILABLE
+{
+  "timestamp": "2024-06-23T10:30:45.123Z",
+  "status": 503,
+  "error": "Service Unavailable",
+  "message": "PICKLPLAY-BACKEND is temporarily unavailable",
+  "service": "PICKLPLAY-BACKEND",
+  "path": "/api/v1/matches",
+  "traceId": "abc-123-xyz"
+}
+

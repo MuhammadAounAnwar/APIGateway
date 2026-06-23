@@ -10,6 +10,8 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.cloud.gateway.filter.GatewayFilter
 import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory
+import org.springframework.http.HttpHeaders
+import org.springframework.http.server.reactive.ServerHttpRequestDecorator
 import org.springframework.stereotype.Component
 import org.springframework.web.server.ServerWebExchange
 import reactor.core.publisher.Mono
@@ -79,20 +81,20 @@ class AuthPreFilterGatewayFilterFactory(
                     val rateKey = RedisKeys.rateByUser(userId)
 
                     rateLimiter.isAllowed(rateKey, perUserRateLimit, 60)
-                        .flatMap { allowed ->
+                        .flatMap outer@{ allowed ->
 
                             tracer.tagRateLimit("user", rateKey, allowed)
                             tracer.tag("auth.user.id", userId)
 
-                            if (!allowed) return@flatMap tooManyRequests()
+                            if (!allowed) return@outer tooManyRequests()
 
                             tokenStoreService.isBlacklisted(jti)
-                                .flatMap { blacklisted ->
+                                .flatMap inner@{ blacklisted ->
 
                                     if (blacklisted) {
                                         tracer.event("token.blacklisted")
                                         tracer.tag("auth.user.id", userId)
-                                        return@flatMap unauthorized("Token blacklisted")
+                                        return@inner unauthorized("Token blacklisted")
                                     }
 
                                     val ttlSeconds = jwt.expiresAt?.let {
@@ -123,15 +125,21 @@ class AuthPreFilterGatewayFilterFactory(
         roles: String,
         tenantId: String
     ): ServerWebExchange {
-        return exchange.mutate()
-            .request(
-                exchange.request.mutate()
-                    .header(USER_ID_HEADER, userId)
-                    .header(USER_ROLES_HEADER, roles)
-                    .header(TENANT_ID_HEADER, tenantId)
-                    .build()
-            )
-            .build()
+        // Decorator approach: creates a mutable copy of headers to avoid
+        // ReadOnlyHttpHeaders mutation issues in Spring Framework 6.2
+        val decoratedRequest = object : ServerHttpRequestDecorator(exchange.request) {
+            override fun getHeaders(): HttpHeaders {
+                val headers = HttpHeaders()
+                super.getHeaders().forEach { name, values ->
+                    headers[name] = ArrayList(values)
+                }
+                headers.set(USER_ID_HEADER, userId)
+                headers.set(USER_ROLES_HEADER, roles)
+                headers.set(TENANT_ID_HEADER, tenantId)
+                return HttpHeaders.readOnlyHttpHeaders(headers)
+            }
+        }
+        return exchange.mutate().request(decoratedRequest).build()
     }
 
     private fun addRateLimitHeaders(

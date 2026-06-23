@@ -119,12 +119,6 @@ spring:
             - name: Retry
               args:
                 name: default
-            - name: TimeLimiter
-              args:
-                name: default
-            - name: Bulkhead
-              args:
-                name: default
             - name: CircuitBreaker
               args:
                 name: default
@@ -145,12 +139,6 @@ spring:
                 redis-rate-limiter.replenishRate: ${RESTAURANT_RATE_LIMIT:30}
                 redis-rate-limiter.burstCapacity: ${RESTAURANT_BURST_CAPACITY:60}
             - name: Retry
-              args:
-                name: default
-            - name: TimeLimiter
-              args:
-                name: default
-            - name: Bulkhead
               args:
                 name: default
             - name: CircuitBreaker
@@ -175,49 +163,6 @@ spring:
             - name: Retry
               args:
                 name: orderStrict
-            - name: TimeLimiter
-              args:
-                name: orderStrict
-            - name: Bulkhead
-              args:
-                name: orderStrict
-            - name: CircuitBreaker
-              args:
-                name: orderStrict
-                fallbackUri: forward:/fallback/order-service
-
-        # ------------------------------------------------------------------
-        # Route 5a: Guest Device Registration (PUBLIC — App Check enforced)
-        # ------------------------------------------------------------------
-        - id: guest_device_service
-          uri: lb://NOTIFICATION-SERVICE
-          predicates:
-            - Path=/api/v1/guest/**
-          filters:
-            - name: AuthPreFilter
-
-        # ------------------------------------------------------------------
-        # Route 5b: Notification Service (SECURED)
-        # ------------------------------------------------------------------
-        - id: notification_service
-          uri: lb://NOTIFICATION-SERVICE
-          predicates:
-            - Path=/api/notifications/**
-          filters:
-            - name: AuthPreFilter
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: ${NOTIFICATION_RATE_LIMIT:25}
-                redis-rate-limiter.burstCapacity: ${NOTIFICATION_BURST_CAPACITY:50}
-            - name: Retry
-              args:
-                name: default
-            - name: TimeLimiter
-              args:
-                name: default
-            - name: Bulkhead
-              args:
-                name: default
             - name: CircuitBreaker
               args:
                 name: default
@@ -237,55 +182,6 @@ spring:
                 redis-rate-limiter.replenishRate: ${EMAIL_RATE_LIMIT:2}
                 redis-rate-limiter.burstCapacity: ${EMAIL_BURST_CAPACITY:5}
             - name: Retry
-              args:
-                name: default
-            - name: TimeLimiter
-              args:
-                name: emailLenient
-            - name: Bulkhead
-              args:
-                name: emailLenient
-            - name: CircuitBreaker
-              args:
-                name: emailLenient
-                fallbackUri: forward:/fallback/email-service
-
-        # ------------------------------------------------------------------
-        # Route 6b: Notification Service — user-facing v1 paths (SECURED)
-        # FCM token registration, user notification feed — JWT auth via Gateway.
-        # Must come before the /api/v1/** Pickleplay catch-all.
-        # ------------------------------------------------------------------
-        - id: notification_service_v1
-          uri: lb://NOTIFICATION-SERVICE
-          predicates:
-            - Path=/api/v1/notifications/**
-          filters:
-            - name: AuthPreFilter
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: ${NOTIFICATION_RATE_LIMIT:25}
-                redis-rate-limiter.burstCapacity: ${NOTIFICATION_BURST_CAPACITY:50}
-
-        # ------------------------------------------------------------------
-        # Route 7: Chat Service REST (SECURED)
-        # ------------------------------------------------------------------
-        - id: chat_service
-          uri: lb://CHAT-SERVICE
-          predicates:
-            - Path=/api/v1/chat/**
-          filters:
-            - name: AuthPreFilter
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: ${CHAT_RATE_LIMIT:50}
-                redis-rate-limiter.burstCapacity: ${CHAT_BURST_CAPACITY:100}
-            - name: Retry
-              args:
-                name: default
-            - name: TimeLimiter
-              args:
-                name: default
-            - name: Bulkhead
               args:
                 name: default
             - name: CircuitBreaker
@@ -323,17 +219,7 @@ spring:
             - Path=/api/v1/**
           filters:
             - name: AuthPreFilter
-            - name: RequestRateLimiter
-              args:
-                redis-rate-limiter.replenishRate: ${PICKLPLAY_RATE_LIMIT:30}
-                redis-rate-limiter.burstCapacity: ${PICKLPLAY_BURST_CAPACITY:60}
             - name: Retry
-              args:
-                name: default
-            - name: TimeLimiter
-              args:
-                name: default
-            - name: Bulkhead
               args:
                 name: default
             - name: CircuitBreaker
@@ -372,12 +258,6 @@ spring:
                 redis-rate-limiter.replenishRate: ${SPOZON_RATE_LIMIT:30}
                 redis-rate-limiter.burstCapacity: ${SPOZON_BURST_CAPACITY:60}
             - name: Retry
-              args:
-                name: default
-            - name: TimeLimiter
-              args:
-                name: default
-            - name: Bulkhead
               args:
                 name: default
             - name: CircuitBreaker

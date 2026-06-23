@@ -3,7 +3,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 plugins {
     kotlin("jvm") version "1.9.24"
     kotlin("plugin.spring") version "1.9.24"
-    id("org.springframework.boot") version "3.2.5"
+    id("org.springframework.boot") version "3.3.5"
     id("io.spring.dependency-management") version "1.1.7"
 }
 
@@ -17,7 +17,7 @@ java {
     }
 }
 
-val springCloudVersion = "2023.0.4"
+val springCloudVersion = "2023.0.1"
 
 dependencyManagement {
     imports {
@@ -60,6 +60,7 @@ dependencies {
     // -------------------------------------------------------------------------
     implementation("org.springframework.cloud:spring-cloud-starter-circuitbreaker-reactor-resilience4j")
     implementation("io.github.resilience4j:resilience4j-micrometer")
+    implementation("io.github.resilience4j:resilience4j-timelimiter")
 
     // -------------------------------------------------------------------------
     // 6. Shared Observability Library
@@ -88,7 +89,17 @@ dependencies {
     // -------------------------------------------------------------------------
     // 9. Firebase Admin SDK (App Check verification)
     // -------------------------------------------------------------------------
-    implementation("com.google.firebase:firebase-admin:9.3.0")
+    implementation("com.google.firebase:firebase-admin:9.3.0") {
+        // Exclude the conflicting gRPC and use netty explicitly
+        exclude(group = "io.grpc", module = "grpc-netty-shaded")
+    }
+    // Explicitly add gRPC netty (non-shaded) with correct version
+    implementation("io.grpc:grpc-netty:1.68.0")
+
+    // -------------------------------------------------------------------------
+    // 9b. Netty Native DNS Resolver for macOS (fixes DNS resolution on Apple Silicon)
+    // -------------------------------------------------------------------------
+    runtimeOnly("io.netty:netty-resolver-dns-native-macos:4.1.108.Final:osx-aarch_64")
 
     // -------------------------------------------------------------------------
     // 10. Testing

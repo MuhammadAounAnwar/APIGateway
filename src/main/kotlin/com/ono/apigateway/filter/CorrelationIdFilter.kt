@@ -3,6 +3,8 @@ package com.ono.apigateway.filter
 import org.springframework.cloud.gateway.filter.GlobalFilter
 import org.springframework.cloud.gateway.filter.GatewayFilterChain
 import org.springframework.core.Ordered
+import org.springframework.http.HttpHeaders
+import org.springframework.http.server.reactive.ServerHttpRequestDecorator
 import org.springframework.stereotype.Component
 import org.springframework.web.server.ServerWebExchange
 import reactor.core.publisher.Mono
@@ -15,6 +17,9 @@ import java.util.UUID
  * The same ID is echoed back in the response header.
  *
  * Order -300: runs before the auth filter (-200) and rate limiter.
+ *
+ * Note: Uses ServerHttpRequestDecorator to inject the header without mutating ReadOnlyHttpHeaders
+ * (required for Spring Framework 6.2 compatibility — request mutation API changed behavior).
  */
 @Component
 class CorrelationIdFilter : GlobalFilter, Ordered {
@@ -29,14 +34,25 @@ class CorrelationIdFilter : GlobalFilter, Ordered {
         val requestId = exchange.request.headers.getFirst(HEADER)
             ?: UUID.randomUUID().toString()
 
-        val mutatedExchange = exchange.mutate()
-            .request(exchange.request.mutate().header(HEADER, requestId).build())
-            .build()
+        // Echo the correlation ID back to the client before response is committed
+        exchange.response.beforeCommit {
+            exchange.response.headers.set(HEADER, requestId)
+            Mono.empty()
+        }
 
-        return chain.filter(mutatedExchange).then(
-            Mono.fromRunnable {
-                mutatedExchange.response.headers.set(HEADER, requestId)
+        // Decorator-based request wrapper: creates a fresh mutable HttpHeaders copy
+        // with the correlation ID injected, avoiding ReadOnlyHttpHeaders mutation issues
+        val decoratedRequest = object : ServerHttpRequestDecorator(exchange.request) {
+            override fun getHeaders(): HttpHeaders {
+                val headers = HttpHeaders()
+                super.getHeaders().forEach { name, values ->
+                    headers[name] = ArrayList(values)
+                }
+                headers.set(HEADER, requestId)
+                return HttpHeaders.readOnlyHttpHeaders(headers)
             }
-        )
+        }
+
+        return chain.filter(exchange.mutate().request(decoratedRequest).build())
     }
 }
