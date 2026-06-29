@@ -94,6 +94,7 @@ spring:
               args:
                 redis-rate-limiter.replenishRate: ${AUTH_RATE_LIMIT:10}
                 redis-rate-limiter.burstCapacity: ${AUTH_BURST_CAPACITY:20}
+                key-resolver: "#{@ipKeyResolver}"
             - name: Retry
               args:
                 name: default
@@ -202,19 +203,19 @@ spring:
         # ------------------------------------------------------------------
         # Route 8a: PicklePlay Backend API Docs (PUBLIC)
         # ------------------------------------------------------------------
-        - id: docs_picklplay_backend
-          uri: lb://PICKLPLAY-BACKEND
+        - id: docs_spozon_backend
+          uri: lb://SPOZON-BACKEND
           predicates:
-            - Path=/gateway-api-docs/picklplay-backend
+            - Path=/gateway-api-docs/spozon-backend
           filters:
-            - RewritePath=/gateway-api-docs/picklplay-backend, /v3/api-docs
+            - RewritePath=/gateway-api-docs/spozon-backend, /v3/api-docs
 
         # ------------------------------------------------------------------
         # Route 8b: PicklePlay Backend — all feature domains (SECURED)
         # Chat service route above takes priority for /api/v1/chat/** paths.
         # ------------------------------------------------------------------
-        - id: picklplay_backend
-          uri: lb://PICKLPLAY-BACKEND
+        - id: spozon_backend
+          uri: lb://SPOZON-BACKEND
           predicates:
             - Path=/api/v1/**
           filters:
@@ -225,7 +226,7 @@ spring:
             - name: CircuitBreaker
               args:
                 name: default
-                fallbackUri: forward:/fallback/picklplay-backend
+                fallbackUri: forward:/fallback/spozon-backend
 
         # ------------------------------------------------------------------
         # Route 9: Spozon Backend — user sub-paths
@@ -368,7 +369,7 @@ springdoc:
       - name: "Spozon Backend"
         url: /gateway-api-docs/spozon-backend
       - name: "PicklePlay Backend"
-        url: /gateway-api-docs/picklplay-backend
+        url: /gateway-api-docs/spozon-backend
     urls-primary-name: "Gateway Routes"
   api-docs:
     enabled: false

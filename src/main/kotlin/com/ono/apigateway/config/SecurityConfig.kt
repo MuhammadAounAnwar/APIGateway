@@ -10,45 +10,48 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority
 import org.springframework.security.oauth2.jwt.ReactiveJwtDecoder
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter
 import org.springframework.security.oauth2.server.resource.authentication.ReactiveJwtAuthenticationConverterAdapter
+import org.springframework.security.oauth2.server.resource.web.server.authentication.ServerBearerTokenAuthenticationConverter
 import org.springframework.security.web.server.SecurityWebFilterChain
+import org.springframework.security.web.server.authentication.ServerAuthenticationConverter
+import reactor.core.publisher.Mono
 
 @Configuration
 @EnableWebFluxSecurity
 @EnableReactiveMethodSecurity
 class SecurityConfig(private val jwtDecoder: ReactiveJwtDecoder) {
 
-    /**
-     * Main security configuration for API Gateway.
-     *
-     * Responsibilities:
-     * - Validate JWT using OAuth2 Resource Server
-     * - Permit public auth endpoints
-     * - Secure all other routes
-     */
+    // Paths that must never trigger Bearer token validation — an invalid or absent
+    // token on these paths must not produce a 401. Spring's BearerTokenAuthenticationWebFilter
+    // runs before the permitAll() authorization decision, so we skip token extraction here.
+    private val publicPathPrefixes = listOf(
+        "/api/auth/",
+        "/api/v1/public/",
+        "/api/v1/guest/",
+        "/ws/",
+        "/fallback/",
+        "/actuator/health",
+        "/api-docs/",
+        "/swagger-ui",
+        "/swagger.yaml",
+        "/webjars/",
+        "/gateway-api-docs/"
+    )
+
     @Bean
     fun securityWebFilterChain(http: ServerHttpSecurity): SecurityWebFilterChain {
 
         return http
             .csrf { it.disable() }
-            .cors { } // Uses gateway CORS config
+            .cors { }
             .authorizeExchange { exchanges ->
-
                 exchanges
-                    // Public endpoints (Authentication Service)
                     .pathMatchers("/api/auth/**").permitAll()
-                    // Public endpoints — no authentication required
                     .pathMatchers("/api/v1/public/**").permitAll()
-                    // Guest FCM device registration — App Check enforces integrity, no Bearer needed
                     .pathMatchers("/api/v1/guest/**").permitAll()
-                    // WebSocket upgrade — JWT validated inside ChatWebSocketHandler
                     .pathMatchers("/ws/**").permitAll()
-                    // Circuit breaker fallbacks must be accessible without auth;
-                    // they are only reachable via gateway internal forward, not the public internet.
                     .pathMatchers("/fallback/**").permitAll()
                     .pathMatchers("/actuator/health").permitAll()
                     .pathMatchers("/actuator/**").hasRole("ADMIN")
-
-                    // Swagger UI + static spec + downstream api-docs proxy
                     .pathMatchers(
                         "/api-docs/**",
                         "/swagger-ui/**",
@@ -57,14 +60,18 @@ class SecurityConfig(private val jwtDecoder: ReactiveJwtDecoder) {
                         "/webjars/**",
                         "/gateway-api-docs/**"
                     ).permitAll()
-
-                    // Allow preflight requests
                     .pathMatchers(HttpMethod.OPTIONS).permitAll()
-
-                    // Everything else requires authentication
+                    .pathMatchers(HttpMethod.GET, "/api/v1/venues").permitAll()
+                    .pathMatchers(HttpMethod.GET, "/api/v1/venues/*").permitAll()
+                    .pathMatchers(HttpMethod.GET, "/api/v1/venues/*/reviews").permitAll()
+                    .pathMatchers(HttpMethod.GET, "/api/v1/venues/*/courts").permitAll()
+                    .pathMatchers(HttpMethod.GET, "/api/v1/venues/*/courts/*/slots").permitAll()
+                    .pathMatchers(HttpMethod.GET, "/api/v1/courts").permitAll()
+                    .pathMatchers(HttpMethod.GET, "/api/v1/courts/**").permitAll()
                     .anyExchange().authenticated()
             }
             .oauth2ResourceServer { oauth2 ->
+                oauth2.bearerTokenConverter(publicPathAwareBearerTokenConverter())
                 oauth2.jwt { jwt ->
                     jwt.jwtDecoder(jwtDecoder)
                     jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())
@@ -73,27 +80,29 @@ class SecurityConfig(private val jwtDecoder: ReactiveJwtDecoder) {
             .build()
     }
 
-    /**
-     * Converts JWT claims into Spring Security authorities.
-     * You can map roles from claims here (e.g., "roles", "authorities").
-     */
+    // Returns Mono.empty() for public paths so BearerTokenAuthenticationWebFilter
+    // skips validation entirely — preventing 401 when a stale/invalid token is present.
+    @Bean
+    fun publicPathAwareBearerTokenConverter(): ServerAuthenticationConverter {
+        val delegate = ServerBearerTokenAuthenticationConverter()
+        return ServerAuthenticationConverter { exchange ->
+            val path = exchange.request.uri.path
+            val isPublic = publicPathPrefixes.any { path.startsWith(it) } ||
+                exchange.request.method == HttpMethod.OPTIONS
+            if (isPublic) Mono.empty() else delegate.convert(exchange)
+        }
+    }
+
     @Bean
     fun jwtAuthenticationConverter(): ReactiveJwtAuthenticationConverterAdapter {
-
         val converter = JwtAuthenticationConverter()
-
         converter.setJwtGrantedAuthoritiesConverter { jwt ->
             val roles = jwt.getClaimAsStringList("roles") ?: emptyList()
-
             roles.map { role ->
-                if (role.startsWith("ROLE_")) {
-                    SimpleGrantedAuthority(role)
-                } else {
-                    SimpleGrantedAuthority("ROLE_$role")
-                }
+                if (role.startsWith("ROLE_")) SimpleGrantedAuthority(role)
+                else SimpleGrantedAuthority("ROLE_$role")
             }
         }
-
         return ReactiveJwtAuthenticationConverterAdapter(converter)
     }
 }

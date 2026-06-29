@@ -133,8 +133,12 @@ logging:
 
 management:
   tracing:
+    enabled: false       # No Jaeger/OTEL collector running locally
     sampling:
-      probability: 0.5  # Dev: sample 50% of traces for debugging (was 10%)
+      probability: 0.0
+  otlp:
+    tracing:
+      endpoint: ""       # Suppress connection attempts to localhost:4317
 
   endpoints:
     web:

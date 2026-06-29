@@ -46,10 +46,11 @@ class AuthPreFilterGatewayFilterFactory(
 
             val request = exchange.request
             val path = request.uri.path
+            val method = request.method
             val ip = request.remoteAddress?.address?.hostAddress ?: "unknown"
 
             // ---------------- PUBLIC ROUTES ----------------
-            if (!routeValidator.isSecured(path)) {
+            if (!routeValidator.isSecured(method, path)) {
                 val key = RedisKeys.rateByIp(ip)
                 return@GatewayFilter rateLimiter
                     .isAllowed(key, publicIpRateLimit, 60)
